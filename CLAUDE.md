@@ -20,16 +20,24 @@ This file is the single source of truth. Read it fully before writing code.
 ## 1. Product
 
 - Landing page: **New pad** button + expiry picker (10 min, 1 h, 6 h, 24 h — default 1 h; 24 h is the max) + a "Join with link" box.
-- Pad page: full-height editor everyone with the link can edit live from phone, tablet or laptop.
-- Normal cut/copy/paste everywhere. Buttons: **Copy all**, **Copy link**, **QR code**, **End now** (creator only).
-- Top bar shows: language picker, theme toggle, connected-people count, connection status, countdown to expiry.
-- Live cursors/selections of others (random colour + random anonymous name, editable, stored in localStorage).
+- Pad page (Rustpad-style): a left sidebar (~260 px) and an editor filling the rest of the width and the full height;
+  everyone with the link can edit live from phone, tablet or laptop. Normal cut/copy/paste everywhere.
+  Sidebar, top to bottom: (1) PoofPad title + theme toggle; (2) connection status, countdown to expiry, **End now**
+  (creator only, with confirmation); (3) language picker; (4) Share: **Copy link**, **Copy all**, **QR code**
+  (the QR dialog shows the link text under the code); (5) Active users: heading with the count, one row per person
+  (colour dot + name), own row first, marked "(you)" and editable, others read-only; (6) Privacy link.
+- Live cursors/selections of others: random colour + random anonymous name (editable, stored in localStorage). A remote
+  cursor shows its owner's name label while they type or move, and on hover.
+- Names are limited to 24 characters with control characters stripped; remote colours must match `#rrggbb` or fall
+  back to a default. Names are rendered with `textContent` only.
 - Expiry: at zero, server deletes everything; every client shows "This pad has expired".
 - Dark theme default (VS Code Dark+ look like rustpad.io): bg `#1e1e1e`, panels `#252526`, text `#d4d4d4`, accent `#0e639c`.
   Light theme toggle, remembered in localStorage; first visit follows `prefers-color-scheme`.
 - Languages: Plain text (default), JavaScript, TypeScript, Python, Java, SQL, JSON, HTML, CSS, Markdown, XML, YAML.
   Language choice is shared via the Y.Doc (a `Y.Map` named `meta`), so everyone sees the same mode.
-- Mobile (≥ 360 px wide): top-bar actions collapse into one menu, editor font ≥ 16 px (prevents iOS zoom), no horizontal page scroll.
+- Mobile (< 768 px, ≥ 360 px wide): the sidebar becomes a slide-in drawer opened by a hamburger button and closed with Esc,
+  a tap outside or its close button; a slim top bar shows the countdown and people count. Touch targets ≥ 44 px, editor
+  font ≥ 16 px (prevents iOS zoom), no horizontal page scroll.
 - Screens for: expired, not found, pad full, link missing key ("This link is incomplete"), wrong key, service busy (free quota hit), offline/reconnecting.
 - Static `/privacy` page (short, plain English).
 

@@ -133,9 +133,31 @@ Decisions / notes:
   budget it was given (very unlikely). A pad that hits 5 MB closes the writer with 4013; there is no client-side
   pre-check for the 5 MB total.
 
-## Phase 5 — UI
+## Phase 5 — UI ✅ (2026-11-20)
 
-## Phase 6 — Hardening
+- [x] Landing: New pad, expiry picker (10 min / 1 h / 6 h / 24 h, default 1 h), "Join with link" (`pad-link.ts`
+      validates same site, padId and a 32-byte key before navigating), short "Why PoofPad?" blurb
+- [x] Pad bar: language picker, theme toggle, people count, connection status, countdown (from the server
+      `expiresAt`, so correct after reload), Copy link, Copy all, QR code (uqr, drawn with DOM calls), End now
+      (creator only, confirmation dialog), editable display name
+- [x] Language shared via `Y.Map("meta")` key `language` (validated against the list); packages loaded with
+      dynamic `import()`, one chunk each
+- [x] Cursors: random name and colour stored in localStorage (`identity.ts`), published in awareness `user`
+- [x] Themes: Dark+ default and a light theme via CSS variables; `public/theme-init.js` (classic script, allowed by
+      CSP `script-src 'self'`) sets `data-theme` before first paint; first visit follows `prefers-color-scheme`
+- [x] Mobile: all actions in one menu up to 1100 px, 44 px targets, 16 px editor/controls on narrow or touch screens,
+      `--app-height` follows `visualViewport` (keyboard), line wrapping, no horizontal scroll
+- [x] Screens (one `message.ts` style): expired, not found, pad full, link incomplete, wrong key, service busy;
+      offline/reconnecting is a banner above the (still editable) editor
+- [x] `/privacy` page (route + `ui/privacy.ts`); no innerHTML anywhere, user text only via textContent
+- [x] `tests/unit/pad-link.test.ts`; Chromium smoke test (desktop + 360 px): sync, language sync, theme persists,
+      copy, QR, End now, expired on both clients, no console errors
+
+Decisions / notes:
+
+- Added `@lezer/highlight` (pinned) as a direct dependency: the syntax colours need its `tags` and it is already
+  installed as a peer of every language package. `@codemirror/legacy-modes` not needed (lang-yaml, lang-xml exist).
+- Countdown uses the local clock against the server's `expiresAt`; a badly wrong device clock shifts it.
 
 ## Phase 7 — Full test plan
 

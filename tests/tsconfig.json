@@ -10,7 +10,11 @@
     "./worker/**/*.ts",
     "../src/worker/**/*.ts",
     "../src/shared/**/*.ts",
+    "../src/client/awareness-user.ts",
+    "../src/client/name.ts",
     "../src/client/crypto.ts",
+    "../src/client/format-remaining.ts",
+    "../src/client/pad-link.ts",
     "../src/client/edit-limit.ts",
     "../src/client/snapshot.ts",
     "../worker-configuration.d.ts"
