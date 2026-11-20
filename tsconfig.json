@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "composite": true,
+    "noEmit": true,
+    "types": []
+  },
+  "files": [],
+  "references": [
+    { "path": "./src/client" },
+    { "path": "./src/worker" },
+    { "path": "./tests" },
+    { "path": "./tsconfig.tools.json" }
+  ]
+}

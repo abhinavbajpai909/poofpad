@@ -1,0 +1,2 @@
+# Copy to .dev.vars for local development and tests. Never set this in production.
+ALLOW_TEST_TTL=1

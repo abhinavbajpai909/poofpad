@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "poofpad",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-18",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/ws/*", "/p/*", "/privacy"],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "PAD", "class_name": "Pad" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Pad"] }],
+  "observability": { "enabled": false },
+}

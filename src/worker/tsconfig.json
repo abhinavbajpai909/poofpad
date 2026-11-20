@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2024"],
+    "tsBuildInfoFile": "../../node_modules/.cache/tsbuild/worker.tsbuildinfo"
+  },
+  "include": ["./**/*.ts", "../shared/**/*.ts", "../../worker-configuration.d.ts"]
+}
