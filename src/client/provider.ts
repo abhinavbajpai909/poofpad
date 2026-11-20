@@ -20,6 +20,8 @@ import {
   decodeSyncAll,
   encodeFrame,
 } from "../shared/protocol";
+import { Purpose, decrypt, encrypt } from "./crypto";
+import { createSerialQueue } from "./serial-queue";
 
 export type ConnectionStatus = "connecting" | "online" | "offline";
 
@@ -27,6 +29,7 @@ export interface PadConnectionHandlers {
   onStatus(status: ConnectionStatus): void;
   onInfo(info: PadInfo): void;
   onClosed(code: number): void;
+  onWrongKey(): void;
 }
 
 interface AwarenessChange {
@@ -55,11 +58,13 @@ function reconnectDelay(attempt: number): number {
 
 export function connectPad(
   padId: string,
+  key: CryptoKey,
   doc: Y.Doc,
   awareness: Awareness,
   handlers: PadConnectionHandlers,
 ): void {
   let socket: WebSocket | null = null;
+  let stopped = false;
   let synced = false;
   let attempt = 0;
   let lastPeers = 0;
@@ -68,11 +73,16 @@ export function connectPad(
   let awarenessTimer: ReturnType<typeof setTimeout> | undefined;
   let awarenessDirty = false;
   let pendingUpdates: Uint8Array[] = [];
+  const outbox = createSerialQueue();
+  const inbox = createSerialQueue();
 
-  function send(type: FrameType, payload: Uint8Array): void {
-    if (synced && socket?.readyState === WebSocket.OPEN) {
-      socket.send(encodeFrame(type, payload));
-    }
+  function sendEncrypted(type: FrameType, purpose: Purpose, plaintext: Uint8Array): void {
+    outbox(async () => {
+      const payload = await encrypt(key, purpose, plaintext);
+      if (synced && socket?.readyState === WebSocket.OPEN) {
+        socket.send(encodeFrame(type, payload));
+      }
+    });
   }
 
   function flushUpdates(): void {
@@ -83,12 +93,18 @@ export function connectPad(
     }
     const merged = Y.mergeUpdates(pendingUpdates);
     pendingUpdates = [];
-    send(FrameType.Update, merged);
+    sendEncrypted(FrameType.Update, Purpose.Doc, merged);
   }
 
   function sendAwareness(): void {
     awarenessDirty = false;
-    send(FrameType.Awareness, encodeAwarenessUpdate(awareness, [doc.clientID]));
+    if (synced) {
+      sendEncrypted(
+        FrameType.Awareness,
+        Purpose.Awareness,
+        encodeAwarenessUpdate(awareness, [doc.clientID]),
+      );
+    }
   }
 
   function scheduleAwareness(): void {
@@ -126,12 +142,41 @@ export function connectPad(
     }
   }
 
-  function handleSyncAll(payload: Uint8Array): void {
+  function stop(): void {
+    stopped = true;
+    synced = false;
+    clearTimeout(reconnectTimer);
+    clearTimeout(updateTimer);
+    clearTimeout(awarenessTimer);
+    doc.off("update", onDocUpdate);
+    awareness.off("update", onAwarenessUpdate);
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("pagehide", onPageHide);
+    const current = socket;
+    socket = null;
+    current?.close(1000);
+  }
+
+  /**
+   * The first stored row is the pad's key check: every client that joins an empty pad writes one, so a
+   * client that can't decrypt it has the wrong key. Later rows that fail come from someone else with a
+   * wrong key and are skipped.
+   */
+  async function handleSyncAll(ws: WebSocket, payload: Uint8Array): Promise<void> {
     const rows = decodeSyncAll(payload);
     if (rows === null) {
       return;
     }
-    const serverUpdate = Y.mergeUpdates(rows);
+    const plain = await Promise.all(rows.map((row) => decrypt(key, Purpose.Doc, row)));
+    if (socket !== ws) {
+      return;
+    }
+    if (rows.length > 0 && plain[0] === null) {
+      stop();
+      handlers.onWrongKey();
+      return;
+    }
+    const serverUpdate = Y.mergeUpdates(plain.filter((row) => row !== null));
     const serverDoc = new Y.Doc();
     Y.applyUpdate(serverDoc, serverUpdate);
     Y.applyUpdate(doc, serverUpdate, REMOTE);
@@ -141,11 +186,29 @@ export function connectPad(
     pendingUpdates = [];
     clearTimeout(updateTimer);
     updateTimer = undefined;
-    if (!Y.equalSnapshots(Y.snapshot(doc), Y.snapshot(serverDoc))) {
-      send(FrameType.Update, Y.encodeStateAsUpdate(doc, Y.encodeStateVector(serverDoc)));
+    if (rows.length === 0 || !Y.equalSnapshots(Y.snapshot(doc), Y.snapshot(serverDoc))) {
+      sendEncrypted(
+        FrameType.Update,
+        Purpose.Doc,
+        Y.encodeStateAsUpdate(doc, Y.encodeStateVector(serverDoc)),
+      );
     }
     serverDoc.destroy();
     handlers.onStatus("online");
+  }
+
+  async function handleUpdate(ws: WebSocket, payload: Uint8Array): Promise<void> {
+    const update = await decrypt(key, Purpose.Doc, payload);
+    if (update !== null && socket === ws) {
+      Y.applyUpdate(doc, update, REMOTE);
+    }
+  }
+
+  async function handleAwareness(ws: WebSocket, payload: Uint8Array): Promise<void> {
+    const update = await decrypt(key, Purpose.Awareness, payload);
+    if (update !== null && socket === ws) {
+      applyAwarenessUpdate(awareness, update, REMOTE);
+    }
   }
 
   function handleInfo(payload: Uint8Array): void {
@@ -160,23 +223,23 @@ export function connectPad(
     handlers.onInfo(info);
   }
 
-  function onMessage(event: MessageEvent): void {
-    if (!(event.data instanceof ArrayBuffer)) {
+  async function handleMessage(ws: WebSocket, data: ArrayBuffer): Promise<void> {
+    if (socket !== ws) {
       return;
     }
-    const frame = decodeFrame(event.data, Number.POSITIVE_INFINITY);
+    const frame = decodeFrame(data, Number.POSITIVE_INFINITY);
     if (frame === null) {
       return;
     }
     switch (frame.type) {
       case FrameType.SyncAll:
-        handleSyncAll(frame.payload);
+        await handleSyncAll(ws, frame.payload);
         return;
       case FrameType.Update:
-        Y.applyUpdate(doc, frame.payload, REMOTE);
+        await handleUpdate(ws, frame.payload);
         return;
       case FrameType.Awareness:
-        applyAwarenessUpdate(awareness, frame.payload, REMOTE);
+        await handleAwareness(ws, frame.payload);
         return;
       case FrameType.Info:
         handleInfo(frame.payload);
@@ -186,13 +249,20 @@ export function connectPad(
     }
   }
 
+  function onMessage(ws: WebSocket, event: MessageEvent): void {
+    const data: unknown = event.data;
+    if (data instanceof ArrayBuffer) {
+      inbox(() => handleMessage(ws, data));
+    }
+  }
+
   function dropRemoteAwareness(): void {
     const remote = [...awareness.getStates().keys()].filter((id) => id !== doc.clientID);
     removeAwarenessStates(awareness, remote, REMOTE);
   }
 
   function onClose(ws: WebSocket, event: CloseEvent): void {
-    if (socket !== ws) {
+    if (socket !== ws || stopped) {
       return;
     }
     socket = null;
@@ -200,6 +270,7 @@ export function connectPad(
     lastPeers = 0;
     dropRemoteAwareness();
     if (isTerminalClose(event.code)) {
+      stop();
       handlers.onClosed(event.code);
       return;
     }
@@ -213,7 +284,7 @@ export function connectPad(
     handlers.onStatus("connecting");
     const ws = new WebSocket(socketUrl(padId));
     ws.binaryType = "arraybuffer";
-    ws.addEventListener("message", onMessage);
+    ws.addEventListener("message", (event) => onMessage(ws, event));
     ws.addEventListener("close", (event) => onClose(ws, event));
     socket = ws;
   }
@@ -227,7 +298,13 @@ export function connectPad(
 
   function onPageHide(): void {
     flushUpdates();
-    send(FrameType.Awareness, encodeAwarenessUpdate(awareness, [doc.clientID], new Map()));
+    if (synced) {
+      sendEncrypted(
+        FrameType.Awareness,
+        Purpose.Awareness,
+        encodeAwarenessUpdate(awareness, [doc.clientID], new Map()),
+      );
+    }
   }
 
   doc.on("update", onDocUpdate);

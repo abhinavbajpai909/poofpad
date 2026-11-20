@@ -1,6 +1,7 @@
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { CloseCode } from "../../shared/codes";
+import { importKey } from "../crypto";
 import { createEditor } from "../editor";
 import { type ConnectionStatus, connectPad } from "../provider";
 import { showMessage } from "./message";
@@ -22,7 +23,21 @@ function closedText(code: number): string {
   }
 }
 
-export function showPad(root: HTMLElement, padId: string): void {
+function showIncompleteLink(root: HTMLElement): void {
+  showMessage(
+    root,
+    "This link is incomplete",
+    "The part after # holds the key that unlocks this pad. Ask for the full link and open it again.",
+  );
+}
+
+export async function showPad(root: HTMLElement, padId: string): Promise<void> {
+  const key = await importKey(location.hash.slice(1));
+  if (key === null) {
+    showIncompleteLink(root);
+    return;
+  }
+
   const bar = document.createElement("header");
   bar.className = "pad-bar";
   const status = document.createElement("span");
@@ -37,7 +52,13 @@ export function showPad(root: HTMLElement, padId: string): void {
   const awareness = new Awareness(doc);
   const view = createEditor(editorHost, doc.getText("text"), awareness);
 
-  connectPad(padId, doc, awareness, {
+  function teardown(): void {
+    view.destroy();
+    awareness.destroy();
+    doc.destroy();
+  }
+
+  connectPad(padId, key, doc, awareness, {
     onStatus(next) {
       status.textContent = STATUS_LABELS[next];
     },
@@ -45,10 +66,16 @@ export function showPad(root: HTMLElement, padId: string): void {
       peers.textContent = `${info.peers} connected`;
     },
     onClosed(code) {
-      view.destroy();
-      awareness.destroy();
-      doc.destroy();
+      teardown();
       showMessage(root, closedText(code));
+    },
+    onWrongKey() {
+      teardown();
+      showMessage(
+        root,
+        "Wrong key",
+        "This link's key can't unlock this pad. Check that you copied the whole link.",
+      );
     },
   });
 }

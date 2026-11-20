@@ -1,4 +1,5 @@
 import { createPad } from "../api";
+import { generateKeyText } from "../crypto";
 
 const DEFAULT_TTL_SECONDS = 3600;
 
@@ -30,7 +31,7 @@ export function showLanding(root: HTMLElement): void {
     createPad(DEFAULT_TTL_SECONDS).then(
       ({ padId, adminToken }) => {
         rememberAdminToken(padId, adminToken);
-        location.assign(`/p/${padId}`);
+        location.assign(`/p/${padId}#${generateKeyText()}`);
       },
       () => {
         button.disabled = false;

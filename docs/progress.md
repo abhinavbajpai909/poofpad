@@ -56,7 +56,36 @@ Decisions / notes:
 - Open question for Phase 4: test 13 needs a 500 KB paste to work, but the max frame is 256 KB and a single Yjs
   update for one paste cannot be split across `UPDATE` frames as-is.
 
-## Phase 3 — Encryption
+## Phase 3 — Encryption ✅ (2026-11-20)
+
+- [x] `src/client/crypto.ts`: key generation (32 random bytes, base64url), import as non-extractable
+      AES-GCM 256 (raw bytes zeroed after import), `encrypt` → `iv(12) || ciphertext+tag` with a fresh
+      `getRandomValues` IV, `decrypt` → plaintext or `null`; AES-GCM additional data binds doc vs awareness
+- [x] `src/shared/base64url.ts`: strict decoder (rejects padding, `+`/`/`, non-canonical trailing bits).
+      Hand-written because `Uint8Array.fromBase64` only became Baseline in Sep 2025 (older iOS Safari lacks it)
+- [x] Landing creates the key client-side and opens `/p/<padId>#<key>`; key never sent, stored or logged
+- [x] Provider encrypts every outgoing `UPDATE`/`AWARENESS`, decrypts incoming frames in a serial queue
+      (order kept across async WebCrypto calls), drops results that belong to a replaced socket
+- [x] Key check row + wrong-key rule (see `docs/protocol.md` → Encryption); wrong key → wrong-key screen,
+      socket closed, nothing applied, no reconnect
+- [x] Missing/malformed `#key` → "This link is incomplete" screen; changing the hash reloads the page
+- [x] Tests 1 (`tests/unit/crypto.test.ts`) and 8 (`tests/worker/encryption.test.ts`: marker scanned in all
+      DO tables, relayed frames and `SYNC_ALL`; row still decrypts to the original update)
+- [x] Browser smoke test (Playwright Chromium against `npm run dev`): two clients sync, no plaintext in any
+      WS frame, incomplete/truncated/wrong key screens, others unaffected by a wrong-key client, late joiner
+      ok, no console errors. `npm run check` passes (73 tests)
+
+Decisions / notes:
+
+- Deviation from the literal "decrypt failure → wrong key screen": only a failure on the first stored row
+  shows it. Applied to every frame, anyone with the padId and a bad key could knock every other client off
+  the pad.
+- Edge case: if a wrong-key client is the very first to open a brand-new pad (before the creator, who opens
+  it immediately), its key check row wins and correct-key clients see "Wrong key".
+- `SNAPSHOT` payloads use `encrypt(key, Purpose.Doc, …)`; wired up with compaction in Phase 4.
+- On `pagehide` the final flush and awareness clear are now async (WebCrypto), so they are best-effort.
+  Unsent edits are still resent from the local doc on the next connect if the tab survives.
+- Playwright Chromium was installed into the user cache (`npx playwright install chromium`) for the smoke test.
 
 ## Phase 4 — Expiry, End now, limits, compaction
 

@@ -12,7 +12,8 @@ if (app) {
       showLanding(app);
       break;
     case "pad":
-      showPad(app, route.padId);
+      window.addEventListener("hashchange", () => location.reload());
+      void showPad(app, route.padId);
       break;
     case "notFound":
       showMessage(app, "Page not found");

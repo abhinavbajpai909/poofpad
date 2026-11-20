@@ -36,6 +36,24 @@ server-to-client frame type.
 - `INFO` payload: UTF-8 JSON `{ "peers": <int>, "expiresAt": <unix ms> }`. `peers` counts open sockets
   including the receiver.
 
+## Encryption
+
+- Pad URL: `/p/<padId>#<key>`. `key` is 32 random bytes as unpadded, canonical base64url (43 chars). Browsers
+  never send the fragment to a server, and the WebSocket URL is built from the host and `padId` only.
+- The key is imported with WebCrypto as a non-extractable AES-GCM 256 key. A missing or malformed key shows
+  the "This link is incomplete" screen and opens no socket.
+- Every `UPDATE`, `AWARENESS` and `SNAPSHOT` payload (and so every stored row) is
+  `iv (12 random bytes) || AES-GCM ciphertext || 16-byte tag`, with a new IV per message.
+- AES-GCM additional data is one byte naming what the payload is: `1` for document data (updates and
+  snapshots), `2` for awareness. A payload decrypted under the wrong one fails, like a wrong key.
+- **Key check.** A client that receives an empty `SYNC_ALL` sends one `UPDATE`, even when it has no edits
+  (an empty Yjs update). So the first stored row of every pad that has been opened proves which key is right.
+- **Decrypt failures.** If the first `SYNC_ALL` row fails to decrypt, the key is wrong: the client applies
+  nothing, closes the socket with `1000`, does not reconnect, and shows the wrong-key screen. Any other row
+  or relayed frame that fails to decrypt came from someone else with a different key. It is dropped and
+  nothing from it is applied.
+- Incoming frames are decrypted and applied one at a time, in arrival order.
+
 ## Connection lifecycle
 
 1. Client opens `GET /ws/<padId>`. Unknown or expired pad → socket accepted then closed with `4004`.
