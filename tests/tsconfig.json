@@ -6,6 +6,7 @@
     "tsBuildInfoFile": "../node_modules/.cache/tsbuild/tests.tsbuildinfo"
   },
   "include": [
+    "./unit/**/*.ts",
     "./worker/**/*.ts",
     "../src/worker/**/*.ts",
     "../src/shared/**/*.ts",

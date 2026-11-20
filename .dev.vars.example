@@ -1,2 +1,4 @@
-# Copy to .dev.vars for local development and tests. Never set this in production.
+# Copy to .dev.vars for local development and tests (.dev.vars is gitignored).
+# Overrides "vars.ALLOW_TEST_TTL" ("0") in wrangler.jsonc to allow 15-second test pads.
+# Never set "1" in production: `wrangler deploy` uses the "0" from wrangler.jsonc.
 ALLOW_TEST_TTL=1

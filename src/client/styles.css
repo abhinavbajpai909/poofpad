@@ -31,5 +31,32 @@ body {
 }
 
 #app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.landing,
+.message {
   padding: 16px;
+}
+
+.landing-error {
+  min-height: 1.5em;
+}
+
+.pad-bar {
+  display: flex;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--panel);
+}
+
+.pad-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.pad-editor .cm-editor {
+  height: 100%;
 }

@@ -12,5 +12,7 @@
     "bindings": [{ "name": "PAD", "class_name": "Pad" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Pad"] }],
+  // Production value. Local dev and tests override it to "1" via .dev.vars (gitignored).
+  "vars": { "ALLOW_TEST_TTL": "0" },
   "observability": { "enabled": false },
 }

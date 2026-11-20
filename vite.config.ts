@@ -10,9 +10,11 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    // Keys starting with "^" are RegExps; plain keys are prefix matches and would also catch
+    // source modules such as /api.ts.
     proxy: {
-      "/api": { target: workerOrigin },
-      "/ws": { target: workerOrigin, ws: true },
+      "^/api/": { target: workerOrigin },
+      "^/ws/": { target: workerOrigin, ws: true },
     },
   },
 });
