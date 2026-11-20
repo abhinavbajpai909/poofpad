@@ -1,5 +1,5 @@
 import { ALLOWED_TTLS_SECONDS, MAX_JSON_BODY_BYTES, TEST_TTL_SECONDS } from "../shared/limits";
-import { badRequest, json, readJsonBody } from "./http";
+import { badRequest, json, readJsonBody, serviceBusy } from "./http";
 import { randomBase64Url, sha256Hex } from "./tokens";
 
 const PAD_ID_BYTES = 16;
@@ -33,9 +33,12 @@ export async function createPad(request: Request, env: Env): Promise<Response> {
   }
   const padId = randomBase64Url(PAD_ID_BYTES);
   const adminToken = randomBase64Url(ADMIN_TOKEN_BYTES);
-  const expiresAt = await env.PAD.getByName(padId).create(ttl, await sha256Hex(adminToken));
-  if (expiresAt === null) {
+  const result = await env.PAD.getByName(padId).create(ttl, await sha256Hex(adminToken));
+  if (!result.ok) {
+    if (result.busy) {
+      return serviceBusy();
+    }
     throw new Error("pad id collision");
   }
-  return json({ padId, adminToken, expiresAt }, 201);
+  return json({ padId, adminToken, expiresAt: result.expiresAt }, 201);
 }

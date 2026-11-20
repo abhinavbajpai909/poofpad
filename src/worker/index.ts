@@ -1,6 +1,9 @@
+import { CloseCode } from "../shared/codes";
 import { PAD_ID_PATTERN } from "../shared/limits";
 import { createPad } from "./create-pad";
-import { internalError, notFound, serveAppShell, upgradeRequired } from "./http";
+import { endPad } from "./end-pad";
+import { internalError, notFound, refuseWebSocket, serveAppShell, upgradeRequired } from "./http";
+import { isAllowedOrigin } from "./origin";
 
 export { Pad } from "./pad";
 
@@ -12,7 +15,25 @@ function connectToPad(request: Request, env: Env, padId: string): Promise<Respon
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return upgradeRequired();
   }
+  if (!isAllowedOrigin(request, env)) {
+    return refuseWebSocket(CloseCode.BadOrigin);
+  }
   return env.PAD.getByName(padId).fetch(request);
+}
+
+function routeApi(
+  request: Request,
+  env: Env,
+  segments: readonly string[],
+): Promise<Response> | Response {
+  const [resource, padId, action, ...extra] = segments;
+  if (resource !== "pads" || request.method !== "POST" || extra.length > 0) {
+    return notFound();
+  }
+  if (padId === undefined) {
+    return createPad(request, env);
+  }
+  return isValidPadId(padId) && action === "end" ? endPad(request, env, padId) : notFound();
 }
 
 function route(request: Request, env: Env): Promise<Response> | Response {
@@ -32,9 +53,7 @@ function route(request: Request, env: Env): Promise<Response> | Response {
         ? connectToPad(request, env, second)
         : notFound();
     case "api":
-      return second === "pads" && rest.length === 0 && method === "POST"
-        ? createPad(request, env)
-        : notFound();
+      return routeApi(request, env, segments.slice(1));
     default:
       return notFound();
   }

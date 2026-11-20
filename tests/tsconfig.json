@@ -11,6 +11,8 @@
     "../src/worker/**/*.ts",
     "../src/shared/**/*.ts",
     "../src/client/crypto.ts",
+    "../src/client/edit-limit.ts",
+    "../src/client/snapshot.ts",
     "../worker-configuration.d.ts"
   ]
 }

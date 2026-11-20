@@ -109,12 +109,14 @@ updates(seq INTEGER PRIMARY KEY, data BLOB NOT NULL)
 | Constant | Value |
 |---|---|
 | Max peers per pad | 50 |
-| Max frame size | 256 KB |
+| Max frame size | 1 MB (a 500 KB paste fits in one frame; DO SQLite allows 8 MB per row/BLOB). `SNAPSHOT` frames may be up to 5 MB + 5 bytes, since a snapshot replaces stored rows |
+| Max change per edit | Local edits (incl. paste, undo, redo) whose Yjs update would not fit one frame are blocked in the editor before they reach the Y.Doc, with a clear message |
 | Max stored bytes per pad | 5 MB |
 | Max messages per socket | 40 / second (sliding 1 s window) |
 | Allowed TTLs | 600, 3600, 21600, 86400 (+15 in test mode) |
 | Update batch window / awareness throttle | 250 ms / 250 ms |
 | Reconnect backoff | 0.5 s doubling to 10 s, with jitter |
+| Compaction trigger | > 300 rows, or > 1 MB in the rows after the oldest (base snapshot) row; re-requested after 10 s if unanswered |
 
 ### 3.2 Why these numbers (Cloudflare Workers Free plan, verified Nov 2026 — re-check the docs page)
 

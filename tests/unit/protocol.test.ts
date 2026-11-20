@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { MAX_FRAME_BYTES } from "../../src/shared/limits";
+import { CloseCode, isErrorCloseCode } from "../../src/shared/codes";
+import { MAX_FRAME_BYTES, MAX_SNAPSHOT_FRAME_BYTES } from "../../src/shared/limits";
 import {
   FrameType,
+  decodeCompactRequest,
+  decodeError,
   decodeFrame,
   decodeInfo,
+  decodeSnapshot,
   decodeSyncAll,
+  encodeCompactRequest,
+  encodeError,
   encodeFrame,
   encodeInfo,
+  encodeSnapshot,
   encodeSyncAll,
 } from "../../src/shared/protocol";
 
@@ -82,5 +89,73 @@ describe("INFO payload", () => {
     '{"peers":1}',
   ])("rejects %s", (text) => {
     expect(decodeInfo(new TextEncoder().encode(text))).toBeNull();
+  });
+});
+
+describe("COMPACT_REQUEST payload", () => {
+  it.each([1, 300, 0xffff_ffff])("round-trips upToSeq %i", (seq) => {
+    expect(decodeCompactRequest(encodeCompactRequest(seq))).toBe(seq);
+  });
+
+  it.each([0, -1, 1.5, 2 ** 32])("refuses to encode %d", (seq) => {
+    expect(() => encodeCompactRequest(seq)).toThrow(RangeError);
+  });
+
+  it.each([
+    ["empty", bytes()],
+    ["too short", bytes(0, 0, 1)],
+    ["too long", bytes(0, 0, 0, 1, 0)],
+    ["seq 0", bytes(0, 0, 0, 0)],
+  ])("rejects %s", (_name, payload) => {
+    expect(decodeCompactRequest(payload)).toBeNull();
+  });
+});
+
+describe("SNAPSHOT payload", () => {
+  it("round-trips", () => {
+    const snapshot = { upToSeq: 42, data: bytes(1, 2, 3) };
+    const payload = encodeSnapshot(snapshot);
+    expect(Array.from(payload.subarray(0, 4))).toEqual([0, 0, 0, 42]);
+    expect(decodeSnapshot(payload)).toEqual(snapshot);
+  });
+
+  it("decodes from a frame view", () => {
+    const frame = decodeFrame(
+      encodeFrame(FrameType.Snapshot, encodeSnapshot({ upToSeq: 7, data: bytes(9) })).buffer,
+      MAX_SNAPSHOT_FRAME_BYTES,
+    );
+    expect(frame && decodeSnapshot(frame.payload)).toEqual({ upToSeq: 7, data: bytes(9) });
+  });
+
+  it.each([
+    ["empty", bytes()],
+    ["seq only", bytes(0, 0, 0, 1)],
+    ["seq 0", bytes(0, 0, 0, 0, 5)],
+    ["truncated seq", bytes(0, 1)],
+  ])("rejects %s", (_name, payload) => {
+    expect(decodeSnapshot(payload)).toBeNull();
+  });
+});
+
+describe("ERROR payload", () => {
+  it.each(Object.values(CloseCode).filter((code) => code >= 4000))("round-trips %i", (code) => {
+    if (!isErrorCloseCode(code)) {
+      throw new Error("not an error code");
+    }
+    const payload = encodeError(code);
+    expect(Array.from(payload)).toEqual([code - 4000]);
+    expect(decodeError(payload)).toBe(code);
+  });
+
+  it("encodes service busy as 5", () => {
+    expect(Array.from(encodeError(CloseCode.ServiceBusy))).toEqual([5]);
+  });
+
+  it.each([
+    ["empty", bytes()],
+    ["unknown code", bytes(2)],
+    ["two bytes", bytes(5, 5)],
+  ])("rejects %s", (_name, payload) => {
+    expect(decodeError(payload)).toBeNull();
   });
 });

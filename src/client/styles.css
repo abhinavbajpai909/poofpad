@@ -60,3 +60,8 @@ body {
 .pad-editor .cm-editor {
   height: 100%;
 }
+
+.pad-notice {
+  flex: 1;
+  min-width: 0;
+}

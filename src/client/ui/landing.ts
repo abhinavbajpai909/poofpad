@@ -1,15 +1,8 @@
+import { rememberAdminToken } from "../admin-token";
 import { createPad } from "../api";
 import { generateKeyText } from "../crypto";
 
 const DEFAULT_TTL_SECONDS = 3600;
-
-function rememberAdminToken(padId: string, adminToken: string): void {
-  try {
-    localStorage.setItem(`admin:${padId}`, adminToken);
-  } catch {
-    return;
-  }
-}
 
 export function showLanding(root: HTMLElement): void {
   const page = document.createElement("section");
@@ -25,18 +18,26 @@ export function showLanding(root: HTMLElement): void {
   const error = document.createElement("p");
   error.className = "landing-error";
 
+  function fail(busy: boolean): void {
+    button.disabled = false;
+    error.textContent = busy
+      ? "PoofPad has reached its free daily limit. Please try again after 00:00 UTC."
+      : "Could not create a pad. Please try again.";
+  }
+
   button.addEventListener("click", () => {
     button.disabled = true;
     error.textContent = "";
     createPad(DEFAULT_TTL_SECONDS).then(
-      ({ padId, adminToken }) => {
-        rememberAdminToken(padId, adminToken);
-        location.assign(`/p/${padId}#${generateKeyText()}`);
+      (result) => {
+        if (!result.ok) {
+          fail(result.busy);
+          return;
+        }
+        rememberAdminToken(result.pad.padId, result.pad.adminToken);
+        location.assign(`/p/${result.pad.padId}#${generateKeyText()}`);
       },
-      () => {
-        button.disabled = false;
-        error.textContent = "Could not create a pad. Please try again.";
-      },
+      () => fail(false),
     );
   });
 

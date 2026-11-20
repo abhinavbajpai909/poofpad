@@ -1,78 +1,8 @@
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { CloseCode } from "../../src/shared/codes";
-import {
-  type Frame,
-  FrameType,
-  decodeFrame,
-  decodeInfo,
-  decodeSyncAll,
-  encodeFrame,
-} from "../../src/shared/protocol";
-
-const origin = "https://poofpad.test";
-
-interface TestSocket {
-  socket: WebSocket;
-  next(): Promise<Frame>;
-  closed: Promise<number>;
-}
-
-async function createPad(): Promise<{ padId: string; expiresAt: number }> {
-  const response = await exports.default.fetch(
-    new Request(`${origin}/api/pads`, { method: "POST", body: JSON.stringify({ ttl: 3600 }) }),
-  );
-  expect(response.status).toBe(201);
-  return response.json();
-}
-
-async function open(padId: string): Promise<TestSocket> {
-  const response = await exports.default.fetch(
-    new Request(`${origin}/ws/${padId}`, { headers: { Upgrade: "websocket" } }),
-  );
-  const socket = response.webSocket;
-  if (socket === null) {
-    throw new Error("no websocket");
-  }
-  socket.binaryType = "arraybuffer";
-  const queue: Frame[] = [];
-  const waiters: ((frame: Frame) => void)[] = [];
-  let resolveClosed: (code: number) => void = () => undefined;
-  const closed = new Promise<number>((resolve) => {
-    resolveClosed = resolve;
-  });
-  socket.addEventListener("message", (event) => {
-    if (!(event.data instanceof ArrayBuffer)) {
-      throw new Error("expected binary frame");
-    }
-    const frame = decodeFrame(event.data, Number.POSITIVE_INFINITY);
-    if (frame === null) {
-      throw new Error("bad frame");
-    }
-    const waiter = waiters.shift();
-    if (waiter) {
-      waiter(frame);
-    } else {
-      queue.push(frame);
-    }
-  });
-  socket.addEventListener("close", (event) => resolveClosed(event.code));
-  socket.accept();
-  return {
-    socket,
-    closed,
-    next: () => {
-      const frame = queue.shift();
-      return frame ? Promise.resolve(frame) : new Promise((resolve) => waiters.push(resolve));
-    },
-  };
-}
-
-async function expectFrame(client: TestSocket, type: FrameType): Promise<Uint8Array> {
-  const frame = await client.next();
-  expect(frame.type).toBe(type);
-  return frame.payload;
-}
+import { FrameType, decodeInfo, decodeSyncAll, encodeFrame } from "../../src/shared/protocol";
+import { type TestSocket, createPad, expectFrame, open, origin } from "./helpers";
 
 async function expectPeers(client: TestSocket, peers: number): Promise<void> {
   expect(decodeInfo(await expectFrame(client, FrameType.Info))?.peers).toBe(peers);

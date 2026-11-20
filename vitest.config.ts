@@ -12,7 +12,13 @@ export default defineConfig({
         },
       },
       {
-        plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
+        plugins: [
+          cloudflareTest({
+            wrangler: { configPath: "./wrangler.jsonc" },
+            // Test mode (15 s TTL, localhost origins) without relying on the gitignored .dev.vars.
+            miniflare: { bindings: { ALLOW_TEST_TTL: "1" } },
+          }),
+        ],
         test: {
           name: "worker",
           include: ["tests/worker/**/*.test.ts"],

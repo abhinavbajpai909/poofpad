@@ -87,7 +87,51 @@ Decisions / notes:
   Unsent edits are still resent from the local doc on the next connect if the tab survives.
 - Playwright Chromium was installed into the user cache (`npx playwright install chromium`) for the smoke test.
 
-## Phase 4 — Expiry, End now, limits, compaction
+## Phase 4 — Expiry, End now, limits, compaction ✅ (2026-11-20)
+
+- [x] Max frame raised to 1 MB (decision 1); CLAUDE.md §3.1 and `docs/protocol.md` updated. Checked against
+      current DO limits: 8 MB max SQLite row/BLOB, 32 MiB max WS message — fine. 5 MB stored cap kept.
+      `SNAPSHOT` frames may be up to 5 MB + 5 bytes (a snapshot can be as large as the pad it replaces)
+- [x] Edit size guard (decision 2): `src/client/edit-limit.ts` — CodeMirror `changeFilter` blocks local changes
+      whose estimated Yjs update (UTF-8 bytes + per-run overhead) would not fit one frame; the Yjs undo manager's
+      undo/redo are checked too (they bypass CM filters). Provider flushes a batch before it would overflow, and
+      offline the unsent backlog counts against the budget. Notice shown in the bar
+- [x] Undo/redo now go through the Yjs undo manager (`Prec.high` + `yUndoManagerKeymap`). Before, basicSetup's CM
+      history handled Ctrl+Z and could undo other people's edits
+- [x] Compaction (decision 3): thresholds in `limits.ts`; request goes to the writer of the row that crossed
+      the threshold; `upToSeq` stored in that socket's attachment; snapshot accepted once, only from that
+      socket; stale snapshots ignored; delete + insert in one `transactionSync`. Snapshot built by
+      `src/client/snapshot.ts` with `encrypt(key, Purpose.Doc, …)`
+- [x] Quota (decision 4): any failed storage write → `ERROR` 5 + close 4005; `POST /api/pads` → 503; client
+      shows the service-busy screen / landing message
+- [x] `ERROR` frame (`closeCode − 4000`) sent before every server-initiated 4xxx close; client prefers it
+- [x] Limits: 50 peers (4009), 40 msg/s sliding window in the socket attachment (4008), 1 MB frame / 5 MB
+      stored (4013), Origin check in the Worker (4003; `localhost:*` only in test mode)
+- [x] End now: `POST /api/pads/<id>/end`, Bearer token, `timingSafeEqual` on SHA-256 hex; 204/401/404/503.
+      Creator-only "End now" button (with confirm) on the pad page; admin token forgotten after end/expiry
+- [x] Expiry: `deleteAll()` first (also deletes the alarm at our compat date), then `ERROR` + 4001 to every
+      socket; if deletion fails, sockets still close and the alarm is re-armed for 10 min later
+- [x] Close codes mapped to the existing message screen (expired, not found, full, too large, busy)
+- [x] Tests 3–7 and 9 (`tests/worker/pads|expiry|compaction|limits.test.ts`), protocol tests for the new
+      payloads, `tests/unit/edit-limit.test.ts`. Worker tests set `ALLOW_TEST_TTL=1` via `vitest.config.ts`
+      (no longer depend on `.dev.vars`); shared helpers in `tests/worker/helpers.ts`
+- [x] Browser smoke test (Chromium, `npm run dev`): 1.5 MB paste blocked with message and other client
+      unchanged; real-provider compaction verified in local SQLite (rows 1–3 → 1.2 MB snapshot at seq 3, row 4
+      kept); late joiner correct; End now → expired screen on all clients, reload → not found; 15 s pad
+      expired on screen at 15.3 s; no console errors
+
+Decisions / notes:
+
+- Compaction byte trigger counts rows after the oldest one, otherwise a pad whose text is itself > 1 MB would
+  be asked to compact after every update.
+- Stored-bytes totals are an in-memory cache, recomputed from SQLite when missing (hibernation-safe), to avoid
+  a full-table scan (rows read) on every update.
+- Origin check moved forward from Phase 6 because test 9 needs it; Phase 6 should still review it.
+- Known limits: a client holding only the padId (no key) that is asked to compact could submit a garbage
+  snapshot; the request only goes to a socket that just wrote a row, but the server cannot verify ciphertext.
+  An offline client whose in-flight frame was lost could, on reconnect, need a diff slightly larger than the
+  budget it was given (very unlikely). A pad that hits 5 MB closes the writer with 4013; there is no client-side
+  pre-check for the 5 MB total.
 
 ## Phase 5 — UI
 

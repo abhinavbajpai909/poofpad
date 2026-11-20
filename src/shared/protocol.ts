@@ -1,3 +1,5 @@
+import { ERROR_CODE_BASE, type ErrorCloseCode, isErrorCloseCode } from "./codes";
+
 export const FrameType = {
   Update: 1,
   Awareness: 2,
@@ -22,7 +24,14 @@ export interface PadInfo {
   expiresAt: number;
 }
 
+export interface Snapshot {
+  upToSeq: number;
+  data: Uint8Array<ArrayBuffer>;
+}
+
 const LENGTH_PREFIX_BYTES = 4;
+const SEQ_BYTES = 4;
+const MAX_SEQ = 0xffff_ffff;
 
 function isFrameType(value: number): value is FrameType {
   return FRAME_TYPES.has(value);
@@ -104,4 +113,61 @@ export function decodeInfo(payload: Uint8Array): PadInfo | null {
     return null;
   }
   return { peers, expiresAt };
+}
+
+function isSeq(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 1 && value <= MAX_SEQ;
+}
+
+function encodeSeq(seq: number, extraBytes: number): Uint8Array<ArrayBuffer> {
+  if (!isSeq(seq)) {
+    throw new RangeError("seq out of range");
+  }
+  const out = new Uint8Array(SEQ_BYTES + extraBytes);
+  new DataView(out.buffer).setUint32(0, seq);
+  return out;
+}
+
+function readSeq(payload: Uint8Array): number | null {
+  if (payload.byteLength < SEQ_BYTES) {
+    return null;
+  }
+  const seq = new DataView(payload.buffer, payload.byteOffset, SEQ_BYTES).getUint32(0);
+  return isSeq(seq) ? seq : null;
+}
+
+export function encodeCompactRequest(upToSeq: number): Uint8Array<ArrayBuffer> {
+  return encodeSeq(upToSeq, 0);
+}
+
+export function decodeCompactRequest(payload: Uint8Array): number | null {
+  return payload.byteLength === SEQ_BYTES ? readSeq(payload) : null;
+}
+
+export function encodeSnapshot(snapshot: Snapshot): Uint8Array<ArrayBuffer> {
+  const out = encodeSeq(snapshot.upToSeq, snapshot.data.byteLength);
+  out.set(snapshot.data, SEQ_BYTES);
+  return out;
+}
+
+export function decodeSnapshot(payload: Uint8Array<ArrayBuffer>): Snapshot | null {
+  const upToSeq = readSeq(payload);
+  if (upToSeq === null || payload.byteLength === SEQ_BYTES) {
+    return null;
+  }
+  return { upToSeq, data: payload.subarray(SEQ_BYTES) };
+}
+
+export function encodeError(code: ErrorCloseCode): Uint8Array<ArrayBuffer> {
+  return new Uint8Array([code - ERROR_CODE_BASE]);
+}
+
+/** Returns the close code an `ERROR` frame announces, or null if the payload is not a known code. */
+export function decodeError(payload: Uint8Array): ErrorCloseCode | null {
+  const byte = payload.byteLength === 1 ? payload[0] : undefined;
+  if (byte === undefined) {
+    return null;
+  }
+  const code = ERROR_CODE_BASE + byte;
+  return isErrorCloseCode(code) ? code : null;
 }

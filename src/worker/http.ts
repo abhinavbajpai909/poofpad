@@ -1,3 +1,6 @@
+import type { ErrorCloseCode } from "../shared/codes";
+import { FrameType, encodeError, encodeFrame } from "../shared/protocol";
+
 function text(body: string, status: number): Response {
   return new Response(body, {
     status,
@@ -11,6 +14,27 @@ export function notFound(): Response {
 
 export function badRequest(): Response {
   return text("Bad request", 400);
+}
+
+export function unauthorized(): Response {
+  return text("Unauthorized", 401);
+}
+
+export function serviceBusy(): Response {
+  return text("Service busy", 503);
+}
+
+export function noContent(): Response {
+  return new Response(null, { status: 204 });
+}
+
+/** Completes a WebSocket upgrade only to send `ERROR` and close: browsers can't read an HTTP error status. */
+export function refuseWebSocket(code: ErrorCloseCode): Response {
+  const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+  server.accept();
+  server.send(encodeFrame(FrameType.Error, encodeError(code)));
+  server.close(code, "refused");
+  return new Response(null, { status: 101, webSocket: client });
 }
 
 export function upgradeRequired(): Response {

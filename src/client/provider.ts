@@ -8,6 +8,7 @@ import * as Y from "yjs";
 import { CloseCode } from "../shared/codes";
 import {
   AWARENESS_THROTTLE_MS,
+  MAX_SNAPSHOT_FRAME_BYTES,
   RECONNECT_MAX_MS,
   RECONNECT_MIN_MS,
   UPDATE_BATCH_MS,
@@ -15,13 +16,17 @@ import {
 import {
   FrameType,
   type PadInfo,
+  decodeCompactRequest,
+  decodeError,
   decodeFrame,
   decodeInfo,
   decodeSyncAll,
   encodeFrame,
 } from "../shared/protocol";
 import { Purpose, decrypt, encrypt } from "./crypto";
+import { MAX_UPDATE_BYTES } from "./edit-limit";
 import { createSerialQueue } from "./serial-queue";
+import { encodeSnapshotFrame } from "./snapshot";
 
 export type ConnectionStatus = "connecting" | "online" | "offline";
 
@@ -30,6 +35,11 @@ export interface PadConnectionHandlers {
   onInfo(info: PadInfo): void;
   onClosed(code: number): void;
   onWrongKey(): void;
+}
+
+export interface PadConnection {
+  /** Bytes of Yjs update the next local change may produce without overflowing a frame. */
+  editBudget(): number;
 }
 
 interface AwarenessChange {
@@ -62,17 +72,19 @@ export function connectPad(
   doc: Y.Doc,
   awareness: Awareness,
   handlers: PadConnectionHandlers,
-): void {
+): PadConnection {
   let socket: WebSocket | null = null;
   let stopped = false;
   let synced = false;
   let attempt = 0;
   let lastPeers = 0;
+  let serverError: number | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let updateTimer: ReturnType<typeof setTimeout> | undefined;
   let awarenessTimer: ReturnType<typeof setTimeout> | undefined;
   let awarenessDirty = false;
   let pendingUpdates: Uint8Array[] = [];
+  let pendingBytes = 0;
   const outbox = createSerialQueue();
   const inbox = createSerialQueue();
 
@@ -93,6 +105,7 @@ export function connectPad(
     }
     const merged = Y.mergeUpdates(pendingUpdates);
     pendingUpdates = [];
+    pendingBytes = 0;
     sendEncrypted(FrameType.Update, Purpose.Doc, merged);
   }
 
@@ -132,8 +145,20 @@ export function connectPad(
     if (origin === REMOTE) {
       return;
     }
+    if (pendingBytes + update.byteLength > MAX_UPDATE_BYTES) {
+      flushUpdates();
+    }
     pendingUpdates.push(update);
+    pendingBytes += update.byteLength;
     updateTimer ??= setTimeout(flushUpdates, UPDATE_BATCH_MS);
+  }
+
+  /**
+   * Online, a batch that would overflow is flushed first, so each change only has to fit a frame on its
+   * own. Offline, everything unsent goes out as one diff on reconnect, so the backlog counts too.
+   */
+  function editBudget(): number {
+    return synced ? MAX_UPDATE_BYTES : MAX_UPDATE_BYTES - pendingBytes;
   }
 
   function onAwarenessUpdate({ added, updated, removed }: AwarenessChange): void {
@@ -184,6 +209,7 @@ export function connectPad(
     synced = true;
     attempt = 0;
     pendingUpdates = [];
+    pendingBytes = 0;
     clearTimeout(updateTimer);
     updateTimer = undefined;
     if (rows.length === 0 || !Y.equalSnapshots(Y.snapshot(doc), Y.snapshot(serverDoc))) {
@@ -223,6 +249,25 @@ export function connectPad(
     handlers.onInfo(info);
   }
 
+  function handleCompactRequest(ws: WebSocket, payload: Uint8Array): void {
+    const upToSeq = decodeCompactRequest(payload);
+    if (upToSeq === null || !synced) {
+      return;
+    }
+    const pending = encodeSnapshotFrame(key, doc, upToSeq);
+    outbox(async () => {
+      const frame = await pending;
+      const fits = frame.byteLength <= MAX_SNAPSHOT_FRAME_BYTES;
+      if (fits && socket === ws && synced && ws.readyState === WebSocket.OPEN) {
+        ws.send(frame);
+      }
+    });
+  }
+
+  function handleError(payload: Uint8Array): void {
+    serverError = decodeError(payload);
+  }
+
   async function handleMessage(ws: WebSocket, data: ArrayBuffer): Promise<void> {
     if (socket !== ws) {
       return;
@@ -243,6 +288,12 @@ export function connectPad(
         return;
       case FrameType.Info:
         handleInfo(frame.payload);
+        return;
+      case FrameType.CompactRequest:
+        handleCompactRequest(ws, frame.payload);
+        return;
+      case FrameType.Error:
+        handleError(frame.payload);
         return;
       default:
         return;
@@ -269,9 +320,11 @@ export function connectPad(
     synced = false;
     lastPeers = 0;
     dropRemoteAwareness();
-    if (isTerminalClose(event.code)) {
+    const code = serverError ?? event.code;
+    serverError = null;
+    if (isTerminalClose(code)) {
       stop();
-      handlers.onClosed(event.code);
+      handlers.onClosed(code);
       return;
     }
     handlers.onStatus("offline");
@@ -312,4 +365,5 @@ export function connectPad(
   window.addEventListener("online", onOnline);
   window.addEventListener("pagehide", onPageHide);
   connect();
+  return { editBudget };
 }
