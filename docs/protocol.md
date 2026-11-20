@@ -89,8 +89,8 @@ server-to-client frame type.
   This covers typing, paste, and Yjs undo/redo (which edit the Y.Doc directly, so the undo manager is checked
   separately). Online, pending batched edits are flushed before a change that would overflow the batch. Offline,
   the unsent backlog counts against the budget, because it is resent as one diff on reconnect.
-- **Origin:** the WebSocket upgrade needs an `Origin` whose host equals the request host (any `localhost` port is
-  also allowed when `ALLOW_TEST_TTL === "1"`). Otherwise: `ERROR` + `4003`.
+- **Origin:** the WebSocket upgrade, `POST /api/pads` and the End now endpoint need an `Origin` whose host equals the request host (any `localhost` port is
+  also allowed when `ALLOW_TEST_TTL === "1"`). A missing, malformed or `null` Origin fails too. Otherwise: `ERROR` + `4003` on the WebSocket, `403` on the POST endpoints.
 - **Quota:** if a storage write fails, the server sends `ERROR` 5 and closes with `4005`. Cloudflare does not
   document a distinguishable error for free-plan daily limits, so any write failure counts. `POST /api/pads`
   returns `503` in the same case.
@@ -109,6 +109,14 @@ server-to-client frame type.
    transaction: delete rows `seq ≤ upToSeq`, then insert the snapshot at `seq = upToSeq`. Rows with
    `seq > upToSeq` that arrived meanwhile are untouched; the snapshot may duplicate some of them, which Yjs ignores.
 4. The snapshot becomes the first row, so it is also the key check for later joiners.
+
+## HTTP status codes
+
+- `POST /api/pads` needs `Content-Type: application/json` (`415` otherwise) and a body of at most 1 KB shaped
+  `{ "ttl": <allowed number> }` (`400` otherwise). Replies: `201`, `400`, `403` bad Origin, `415`, `503`.
+- A known route with the wrong method answers `405` with an `Allow` header: pages allow `GET, HEAD`, `/ws/<id>`
+  allows `GET`, the two POST endpoints allow `POST`. Unknown paths and invalid pad IDs answer `404`.
+- Error bodies are fixed short strings; they never echo input.
 
 ## Expiry and End now
 

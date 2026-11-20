@@ -22,7 +22,7 @@ import {
   encodeInfo,
   encodeSyncAll,
 } from "../shared/protocol";
-import { refuseWebSocket } from "./http";
+import { acceptWebSocket, refuseWebSocket } from "./http";
 import { hashesMatch } from "./tokens";
 
 interface PadMeta {
@@ -125,7 +125,7 @@ export class Pad extends DurableObject<Env> {
     server.serializeAttachment({ hits: [], compactUpTo: null } satisfies SocketState);
     server.send(encodeFrame(FrameType.SyncAll, encodeSyncAll(this.readRows())));
     this.broadcastInfo(meta, null);
-    return new Response(null, { status: 101, webSocket: client });
+    return acceptWebSocket(client);
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {

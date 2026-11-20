@@ -20,7 +20,9 @@ export interface TestSocket {
 }
 
 export function post(path: string, init: RequestInit = {}): Promise<Response> {
-  return exports.default.fetch(new Request(origin + path, { method: "POST", ...init }));
+  const headers = new Headers({ Origin: origin, "Content-Type": "application/json" });
+  new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+  return exports.default.fetch(new Request(origin + path, { method: "POST", ...init, headers }));
 }
 
 export async function createPad(ttl = 3600): Promise<CreatedPad> {

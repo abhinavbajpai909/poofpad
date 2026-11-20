@@ -136,7 +136,7 @@ describe("end now (test 6)", () => {
     await response.body?.cancel();
   });
 
-  it.each(["GET", "PUT", "DELETE"])("returns 404 for %s", async (method) => {
+  it.each(["GET", "PUT", "DELETE"])("returns 405 for %s", async (method) => {
     const { padId, adminToken } = await createPad();
     const response = await exports.default.fetch(
       new Request(`${origin}/api/pads/${padId}/end`, {
@@ -144,7 +144,8 @@ describe("end now (test 6)", () => {
         headers: { Authorization: `Bearer ${adminToken}` },
       }),
     );
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(405);
+    expect(response.headers.get("Allow")).toBe("POST");
     await response.body?.cancel();
     expect(await storedTables(padId)).toContain("meta");
   });

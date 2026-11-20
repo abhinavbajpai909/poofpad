@@ -1,5 +1,5 @@
 import { ALLOWED_TTLS_SECONDS, MAX_JSON_BODY_BYTES, TEST_TTL_SECONDS } from "../shared/limits";
-import { badRequest, json, readJsonBody, serviceBusy } from "./http";
+import { badRequest, json, readJsonBody, serviceBusy, unsupportedMediaType } from "./http";
 import { randomBase64Url, sha256Hex } from "./tokens";
 
 const PAD_ID_BYTES = 16;
@@ -24,6 +24,11 @@ function parseTtl(body: unknown, allowTestTtl: boolean): number | null {
 }
 
 export async function createPad(request: Request, env: Env): Promise<Response> {
+  if (
+    request.headers.get("Content-Type")?.split(";")[0]?.trim().toLowerCase() !== "application/json"
+  ) {
+    return unsupportedMediaType();
+  }
   const ttl = parseTtl(
     await readJsonBody(request, MAX_JSON_BODY_BYTES),
     env.ALLOW_TEST_TTL === "1",

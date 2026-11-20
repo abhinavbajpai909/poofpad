@@ -20,7 +20,7 @@ Decisions recorded:
 - DO declared with `migrations` (not `exports`, which is irreversible after deploy).
 - DO stubs via `env.PAD.getByName(padId)`.
 - QR library: `uqr@0.1.3` (added in Phase 5).
-- `_headers` only covers static-asset responses; Worker responses get the same headers from `http.ts` (Phase 6).
+- `_headers` only covers static-asset responses; Worker responses get the same headers from `http.ts` (done in Phase 6).
 
 ## Phase 2 — Realtime sync, unencrypted ✅ (2026-11-20)
 
@@ -158,6 +158,31 @@ Decisions / notes:
 - Added `@lezer/highlight` (pinned) as a direct dependency: the syntax colours need its `tags` and it is already
   installed as a peer of every language package. `@codemirror/legacy-modes` not needed (lang-yaml, lang-xml exist).
 - Countdown uses the local clock against the server's `expiresAt`; a badly wrong device clock shifts it.
+
+## Phase 6 — Hardening ✅ (2026-11-20)
+
+- [x] Security headers: one set in `SECURITY_HEADERS` (`http.ts`) on every Worker response (pages, API, 404, 405,
+      WebSocket 101 accepted or refused); `public/_headers` repeats it for assets the platform serves directly
+      (`/`, `/assets/*`, `/theme-init.js`, `/favicon.svg`); `tests/unit/config.test.ts` fails if the two differ
+- [x] CSP verified in Chromium, Firefox and WebKit: 0 violations on landing, pad (typing, highlighting, language
+      switch, remote cursor, QR dialog, theme toggle, 360 px drawer), `/privacy` and every error screen
+- [x] Origin check also on `POST /api/pads` and End now (403); missing Origin is refused; `localhost` only when
+      `ALLOW_TEST_TTL === "1"`; `wrangler.jsonc` pins it to "0" and a test fails if that changes
+- [x] Validation audit: 405 + `Allow` for wrong methods, 415 for a non-JSON create, fixed error bodies
+- [x] No-logging audit and `no-console` lint; cache headers; `npm audit` 0 findings; secrets check
+- [x] Worker tests for headers on `/`, `/p/<id>`, `/privacy`, a JS asset, API responses, 404 and WebSocket upgrades
+
+Decisions / notes:
+
+- `style-src 'unsafe-inline'` stays: CodeMirror (style-mod) inserts `<style>` elements, blocked without it
+  (verified: 5 `style-src-elem` violations). Style attributes are never used (only CSSOM `.style.x =`, which CSP
+  allows), so only the element case needs it. A nonce would need dynamic HTML for `/`, which is static.
+- `connect-src 'self'` covers the WebSocket in Chromium, Firefox and WebKit (Playwright builds); no `wss:` added.
+  Older Safari releases are reported to not match `'self'` to `ws:`/`wss:`; add `wss://poofpad.com` if a real
+  Safari device fails to connect after deploy.
+- Removed `interactive-widget` from the viewport meta: WebKit logged it as a console error (test 20) and
+  `viewport.ts` already tracks `visualViewport`.
+- WebKit logs a (warning-level) cross-origin-isolation note because of the required COOP header; harmless.
 
 ## Phase 7 — Full test plan
 

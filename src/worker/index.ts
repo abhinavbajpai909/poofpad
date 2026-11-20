@@ -2,7 +2,15 @@ import { CloseCode } from "../shared/codes";
 import { PAD_ID_PATTERN } from "../shared/limits";
 import { createPad } from "./create-pad";
 import { endPad } from "./end-pad";
-import { internalError, notFound, refuseWebSocket, serveAppShell, upgradeRequired } from "./http";
+import {
+  forbidden,
+  internalError,
+  methodNotAllowed,
+  notFound,
+  refuseWebSocket,
+  serveAppShell,
+  upgradeRequired,
+} from "./http";
 import { isAllowedOrigin } from "./origin";
 
 export { Pad } from "./pad";
@@ -27,31 +35,42 @@ function routeApi(
   segments: readonly string[],
 ): Promise<Response> | Response {
   const [resource, padId, action, ...extra] = segments;
-  if (resource !== "pads" || request.method !== "POST" || extra.length > 0) {
+  const creates = resource === "pads" && padId === undefined;
+  const ends = resource === "pads" && isValidPadId(padId) && action === "end" && extra.length === 0;
+  if (!creates && !ends) {
     return notFound();
   }
-  if (padId === undefined) {
-    return createPad(request, env);
+  if (request.method !== "POST") {
+    return methodNotAllowed("POST");
   }
-  return isValidPadId(padId) && action === "end" ? endPad(request, env, padId) : notFound();
+  if (!isAllowedOrigin(request, env)) {
+    return forbidden();
+  }
+  return creates ? createPad(request, env) : endPad(request, env, padId as string);
+}
+
+function routePage(request: Request, env: Env): Promise<Response> | Response {
+  return request.method === "GET" || request.method === "HEAD"
+    ? serveAppShell(request, env)
+    : methodNotAllowed("GET, HEAD");
 }
 
 function route(request: Request, env: Env): Promise<Response> | Response {
   const segments = new URL(request.url).pathname.split("/").slice(1);
   const [head, second, ...rest] = segments;
-  const method = request.method;
 
   switch (head) {
     case "privacy":
-      return segments.length === 1 && method === "GET" ? serveAppShell(request, env) : notFound();
+      return segments.length === 1 ? routePage(request, env) : notFound();
     case "p":
-      return isValidPadId(second) && rest.length === 0 && method === "GET"
-        ? serveAppShell(request, env)
-        : notFound();
+      return isValidPadId(second) && rest.length === 0 ? routePage(request, env) : notFound();
     case "ws":
-      return isValidPadId(second) && rest.length === 0 && method === "GET"
+      if (!isValidPadId(second) || rest.length > 0) {
+        return notFound();
+      }
+      return request.method === "GET"
         ? connectToPad(request, env, second)
-        : notFound();
+        : methodNotAllowed("GET");
     case "api":
       return routeApi(request, env, segments.slice(1));
     default:

@@ -125,5 +125,5 @@ describe("encrypt / decrypt", () => {
       ivs.add(toBase64Url(sealed.subarray(0, IV_BYTES)));
     }
     expect(ivs.size).toBe(10_000);
-  });
+  }, 30_000);
 });

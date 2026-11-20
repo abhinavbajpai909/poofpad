@@ -1,6 +1,7 @@
 /**
- * A WebSocket upgrade must come from a page on this host. In test mode (`ALLOW_TEST_TTL === "1"`) any
- * `localhost` port is also allowed, for the Vite dev server and Playwright.
+ * Browser-made requests (WebSocket upgrades and the POST endpoints) must come from a page on this host.
+ * A missing or unparsable `Origin` is refused. In test mode (`ALLOW_TEST_TTL === "1"`) any `localhost`
+ * port is also allowed, for the Vite dev server and Playwright.
  */
 export function isAllowedOrigin(request: Request, env: Env): boolean {
   const header = request.headers.get("Origin");
