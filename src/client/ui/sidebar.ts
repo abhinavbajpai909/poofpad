@@ -26,7 +26,7 @@ export interface Sidebar {
   /** Phones only: the dimmed area behind the open drawer. */
   backdrop: HTMLElement;
   setStatus(status: ConnectionStatus): void;
-  setExpiry(expiresAt: number): void;
+  setExpiry(expiresAt: number, serverNow: number): void;
   setLanguage(id: LanguageId): void;
   setUsers(users: readonly ActiveUser[]): void;
   stop(): void;

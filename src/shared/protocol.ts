@@ -12,6 +12,13 @@ export const FrameType = {
 
 export type FrameType = (typeof FrameType)[keyof typeof FrameType];
 
+/**
+ * Heartbeat: the only text frames. The client sends exactly this ping and the Cloudflare runtime answers
+ * with exactly this pong (WebSocket auto-response), without waking the Durable Object. No content.
+ */
+export const HEARTBEAT_PING = "ping";
+export const HEARTBEAT_PONG = "pong";
+
 const FRAME_TYPES: ReadonlySet<number> = new Set(Object.values(FrameType));
 
 export interface Frame {
@@ -22,6 +29,8 @@ export interface Frame {
 export interface PadInfo {
   peers: number;
   expiresAt: number;
+  /** The server's clock (ms since epoch) when it sent this, so clients can correct their own clock. */
+  now: number;
 }
 
 export interface Snapshot {
@@ -89,7 +98,9 @@ export function decodeSyncAll(payload: Uint8Array): Uint8Array[] | null {
 }
 
 export function encodeInfo(info: PadInfo): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify({ peers: info.peers, expiresAt: info.expiresAt }));
+  return new TextEncoder().encode(
+    JSON.stringify({ peers: info.peers, expiresAt: info.expiresAt, now: info.now }),
+  );
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -108,11 +119,15 @@ export function decodeInfo(payload: Uint8Array): PadInfo | null {
   if (typeof parsed !== "object" || parsed === null) {
     return null;
   }
-  const { peers, expiresAt } = parsed as Record<string, unknown>;
-  if (!isNonNegativeInteger(peers) || !isNonNegativeInteger(expiresAt)) {
+  const { peers, expiresAt, now } = parsed as Record<string, unknown>;
+  if (
+    !isNonNegativeInteger(peers) ||
+    !isNonNegativeInteger(expiresAt) ||
+    !isNonNegativeInteger(now)
+  ) {
     return null;
   }
-  return { peers, expiresAt };
+  return { peers, expiresAt, now };
 }
 
 function isSeq(value: number): boolean {

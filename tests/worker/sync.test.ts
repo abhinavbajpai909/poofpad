@@ -15,7 +15,7 @@ describe("pad sync", () => {
     const a = await open(padId);
     expect(decodeSyncAll(await expectFrame(a, FrameType.SyncAll))).toEqual([]);
     const firstInfo = decodeInfo(await expectFrame(a, FrameType.Info));
-    expect(firstInfo).toEqual({ peers: 1, expiresAt });
+    expect(firstInfo).toEqual({ peers: 1, expiresAt, now: expect.any(Number) });
 
     const b = await open(padId);
     expect(decodeSyncAll(await expectFrame(b, FrameType.SyncAll))).toEqual([]);
@@ -76,7 +76,14 @@ describe("pad sync", () => {
   it.each([
     ["a text frame", "hello"],
     ["an unknown frame type", new Uint8Array([99, 1]).buffer],
-    ["a server-only frame type", new Uint8Array([FrameType.SyncAll]).buffer],
+    ["an empty binary frame", new ArrayBuffer(0)],
+    ["a client-sent SYNC_ALL", new Uint8Array([FrameType.SyncAll]).buffer],
+    [
+      "a client-sent COMPACT_REQUEST",
+      new Uint8Array([FrameType.CompactRequest, 0, 0, 0, 1]).buffer,
+    ],
+    ["a client-sent INFO", new Uint8Array([FrameType.Info, 0x7b, 0x7d]).buffer],
+    ["a client-sent ERROR", new Uint8Array([FrameType.Error, 1]).buffer],
   ])("closes the socket on %s", async (_name, message) => {
     const { padId } = await createPad();
     const client = await open(padId);

@@ -158,6 +158,7 @@ Decisions / notes:
 - Added `@lezer/highlight` (pinned) as a direct dependency: the syntax colours need its `tags` and it is already
   installed as a peer of every language package. `@codemirror/legacy-modes` not needed (lang-yaml, lang-xml exist).
 - Countdown uses the local clock against the server's `expiresAt`; a badly wrong device clock shifts it.
+  (Fixed in Phase 7: `INFO.now` carries the server clock and the countdown corrects for the offset.)
 
 ## Phase 6 — Hardening ✅ (2026-11-20)
 
@@ -184,6 +185,154 @@ Decisions / notes:
   `viewport.ts` already tracks `visualViewport`.
 - WebKit logs a (warning-level) cross-origin-isolation note because of the required COOP header; harmless.
 
-## Phase 7 — Full test plan
+## Phase 7 — Full test plan ✅ (2026-11-21)
+
+Final runs on the dev machine (Windows, i5 8th gen, 16 GB): `npm run check` 266 unit + worker tests passed;
+`npm run test:e2e` 181 passed, 3 skipped, 0 failed, 0 flaky (Chromium, Firefox, Pixel 7: 113 passed, 1 skipped
+in 5.5 min; WebKit, iPhone 14: 68 passed, 2 skipped in 7.7 min).
+
+- [x] Unit: crypto, protocol (incl. `INFO.now`), base64url edge cases, limits vs. CLAUDE.md 3.1, edit limit,
+      serial queue (order, keeps going after a failure, logs only "internal error"), `compactState`, configs
+- [x] Worker: lifecycle, alarm, End now, compaction (incl. re-request right after an answer), limits, close
+      codes, Origin, headers, every client-sent server-only frame type, empty frame, awareness > 1 MB, SNAPSHOT > 5 MB + 5, 20 clients dropping and reconnecting at once (peer counts), `INFO.now`
+- [x] E2E, all five projects (`tests/e2e/`): create, two-client sync, reload, empty pad, Unicode incl. CRLF
+      (test 14), undo/redo own edits only, language sync + reload, theme persists, countdown after reload and
+      with the device clock 2 h fast, QR dialog, name input (id/name, shared, never parsed as HTML), End now,
+      privacy, incomplete link (missing, empty, truncated, too long, invalid characters, percent junk,
+      non-canonical key), wrong key (others untouched), unknown pad, malformed paths → 404, 15 s expiry on all
+      clients then not found (test 16), same-position typing (test 10), rapid typing, 500 KB paste syncs and
+      6 MB blocked with others unaffected (test 13), offline/reconnect incl. both clients offline (test 15),
+      360 px: no horizontal scroll, drawer (Esc, outside tap, close button), touch targets ≥ 44 px, editor font
+      ≥ 16 px (test 20), security headers on the running server (test 21), clipboard (test 18)
+- [x] E2E, Chromium only (`@heavy`): edit-size boundary search, 5,000/20,000-line files with 500-line add/delete,
+      4 MB pad, 8 × 900 KB paste/delete under 5 MB, late joiner after compaction (test 12), five clients
+      random-editing 30 s (test 11), 51st person → pad full, ten clients dropped at once
+- [x] Every E2E test fails on any console error or page error, and checks that pad IDs and keys never appear in
+      console output
+- [x] No logging: still only the two generic `console.error("internal error")` calls; no error path includes
+      text, keys, tokens or IDs
+- [x] Cleanups: name input has `id`/`name` `display-name`; countdown uses the server clock (`INFO.now`)
+
+Bugs found and fixed:
+
+1. **Pad fills up although its text is small (5 MB limit).** The live Y.Doc keeps deleted text for the undo
+   manager, and snapshots were `Y.encodeStateAsUpdate(doc)`, so they carried every paste ever deleted (seen:
+   1.8 MB, then 3.7 MB, with < 1 MB visible). Repeated large paste/delete ended in "This pad is full". Fix:
+   snapshots come from a fresh copy where Yjs garbage-collects deleted content (`compactState`); now ~0.9 MB.
+2. **Compaction request throttled after it was answered.** The 10 s wait applied to every request, so fast
+   successive large edits outran compaction. Fix: the wait only covers unanswered requests (`pad.ts`).
+3. **CRLF lost (test 14).** CodeMirror turned pasted `\r\n` into `\n`. Fix: `lineSeparator: "\n"` so `\r` stays
+   in the text, and `\r` is removed from the special-character set so it draws as whitespace, not a red dot.
+4. **Countdown wrong with a wrong device clock.** Fix: `INFO.now` (server clock) and a clock offset.
+5. **Test infrastructure (not app bugs, fixed at the cause):** extra browser contexts were never closed and
+   slowed later tests (worst in WebKit); `modKey` used the user agent, but CodeMirror decides Mac-ness from
+   `navigator.platform`; Playwright's `Shift+z` sends a lower-case key; Android emulation drops an Enter typed
+   straight into following text; Windows' clipboard converts `\n` to `\r\n` on read-back; the expiry test did
+   unrelated work against its 15 s deadline; two WebKit instances at once on this machine made each keystroke
+   ~300 ms instead of ~15 ms, so the WebKit projects run with one worker (`test:e2e:webkit`); the serial-queue
+   unit test waited a fixed 60 ms instead of for the queue (failed once under load).
+
+Measured (Chromium, this laptop, local `wrangler dev`; machine-dependent, not asserted):
+
+| Case                                   | Result                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Largest ASCII paste that syncs         | 1,044,339 bytes (one more byte is blocked with the "too large" message)                                       |
+| 5,000 lines (216 KB)                   | paste → other client 487 ms; 500-line add + delete → back 290 ms; keystroke 16.8 ms; typed line remote 364 ms |
+| 20,000 lines (882 KB)                  | paste → other client 911 ms; 500-line add + delete → back 478 ms; keystroke 19.1 ms; typed line remote 610 ms |
+| 4 MB pad (four 1 MB pastes)            | keystroke 21.6 ms; typed text remote 750 ms; late joiner loaded 1,545 ms                                      |
+| 8 × 900 KB paste + delete (7 MB total) | never over 5 MB; 4 snapshots; pad stays usable                                                                |
+
+Degradation is mild up to 4 MB: local typing goes from ~17 to ~22 ms per keystroke. A single paste over ~1 MB is
+blocked by design; the 20,000-line file fits.
+
+Could not test here, or verified only partly (stated honestly):
+
+- **Clipboard read-back in Firefox, WebKit, iPhone 14:** skipped. Playwright cannot grant clipboard permissions
+  there (Firefox: no clipboard permissions; WebKit: "Unknown permission: clipboard-write"). Verified in Chromium
+  and Pixel 7 only.
+- **Paste in Firefox:** synthetic paste events carry no data in Firefox, so the E2E paste there is a CodeMirror
+  transaction tagged `input.paste`. It goes through the same change filter (the size limit) but not Firefox's
+  own paste event handling.
+- **Network drops:** `context.setOffline(true)` does not close an open WebSocket in any engine here (verified;
+  `navigator.onLine` turns false, the socket stays up; the app now reacts to the `offline` event itself). Drops are simulated with Playwright's `routeWebSocket`,
+  closing both sides of the real connection. Not tested: a real radio/Wi-Fi loss on a device.
+- **Mobile:** Pixel 7 and iPhone 14 are emulations (desktop Chromium/WebKit with a phone viewport, user agent and
+  touch); no real Android keyboard (IME) or iOS Safari was used.
+- **Large documents** were measured in Chromium only; WebKit on Windows is much slower in Playwright and not
+  representative of Safari.
+- The edit-size limit is an estimate checked in the editor; the boundary test shows the largest allowed ASCII
+  paste is also accepted by the server. Multi-byte text was unit-tested, not boundary-searched in E2E.
+- The E2E text reader uses CodeMirror's internal `cmTile.view` (test-only); a CodeMirror update may rename it
+  (the helper then fails with a clear message).
+- Hibernation: per-socket state is in attachments and verified by design and review; the local runtime gives no
+  way to force hibernation in a test.
+
+Decisions / notes:
+
+- `INFO` gained `now` (server ms). An old client still open during a deploy ignores the extra field; a new client
+  requires it, which is fine because the Worker and the client assets deploy together.
+- `\r` in the text is drawn as whitespace and is one extra cursor stop at the end of a CRLF line; this keeps
+  test 14's "exact round-trip" and keeps every client's CodeMirror text equal to the shared Y.Text.
+- (Superseded by the follow-up below: the app now has a heartbeat and listens to `offline`/`online`.)
+
+### Phase 7 follow-up (2026-11-21): compaction IDs, heartbeat, offline events
+
+Final runs: `npm run check` 279 unit + worker tests passed (21 files); `npm run test:e2e` 196 passed, 3 skipped
+(clipboard in Firefox, WebKit, iPhone 14), 0 failed, 0 flaky: Chromium, Firefox, Pixel 7 122 passed, 1 skipped
+in 5.1 min; WebKit, iPhone 14 74 passed, 2 skipped in 7.2 min.
+
+**1. Compaction keeps Yjs item IDs (verified).** `compactState` encodes the live doc with
+`Y.encodeStateAsUpdate` and applies that update to a fresh `Y.Doc` (gc on, the default). Applying an update
+integrates the original structs with their original IDs (client ID + clock); nothing is re-inserted. Deleted
+items in the copy are garbage-collected: their content is dropped and they become `GC` structs covering the same
+ID ranges. `Y.encodeStateAsUpdate(copy)` then writes those IDs. Tests:
+
+- `tests/unit/snapshot.test.ts`: for every index of a churned document, the relative position (which names the
+  item ID) in the compacted copy equals the original's, and the state vectors are identical; a full-history
+  client and a snapshot joiner edit concurrently at the edge of a garbage-collected run, both ends and mid-word,
+  and three docs converge.
+- `tests/e2e/compaction.spec.ts` (all five projects): A stays connected and keeps typing; two 600 KB pastes
+  next to old text are deleted again; compaction happens (COMPACT_REQUEST received, SNAPSHOT sent); the late
+  joiner's `SYNC_ALL` is < 64 KB (proves the server replaced the rows and the deleted pastes are gone); A and B
+  then insert at the same spots at once (where the pastes were, both ends, inside a word); both texts are
+  identical, every insert is present, the old text is intact, and a third client loads the same text.
+  Passed in Chromium and WebKit (2 repeats each) and in the full run.
+
+**2. WebKit + iPhone 14 re-run in full** after all edits: see the final runs above.
+
+**3. Half-open connections: heartbeat (built, because it is free).** Cloudflare docs checked 2026-11-21:
+
+- `state.setWebSocketAutoResponse` (Durable Object State API): matching requests get the response "without
+  waking WebSockets in hibernation and incurring billable duration charges"; request and response ≤ 2,048
+  characters each; `getWebSocketAutoResponseTimestamp` records the last one.
+- Durable Objects pricing: auto-responses "will not incur additional wall-clock time, and so they will not be
+  charged". Free plan: 100,000 requests/day, 13,000 GB-s/day; incoming WebSocket messages bill at 20:1.
+- Assumption (not stated explicitly by the docs): "not charged" also means not counted against the Free plan's
+  daily request limit, since that limit is defined in the same billing units.
+- For comparison, without auto-response: one tab pinging every 25 s = 3,456 messages/day = ~173 billed
+  requests/day and a wake-up each time. With it: 0.
+
+Implementation: `src/client/heartbeat.ts` (ping every 25 s while visible, dead after 10 s without pong, paused
+when hidden, immediate ping on becoming visible); `provider.ts` gives up on a dead connection at once (banner,
+close `1000`, normal backoff), listens to `offline` (give up at once, no retries while
+`navigator.onLine` is false) and `online` (reconnect at once, backoff reset); `pad.ts` registers the auto-response
+in the constructor. Pings are the fixed text `ping`, pongs `pong`; no content, no logging. Documented in
+`docs/protocol.md` (Heartbeat).
+
+Tests: `tests/unit/heartbeat.test.ts` (6, fake timers), `tests/worker/heartbeat.test.ts` (pong; 120 pings in a
+burst are all answered, never reach `webSocketMessage`, leave the rate window at 0 hits, socket stays open; any
+other text still closes `1003`), protocol drift guards, and two E2E tests in `offline.spec.ts` (all five
+projects): a stalled connection (Playwright route that keeps the socket open but forwards nothing either way)
+is detected within 35 s, the client closes it with `1000`, reconnects and merges both sides' edits;
+`setOffline(true)` shows the banner within 3 s, no retries while offline, `setOffline(false)` reconnects within
+3 s and merges.
+
+Found while testing: after a heartbeat failure the banner is up only until the reconnect starts (< 1 s with a
+working network). The first E2E version waited for it with Playwright polling and missed it; the test now
+records the banner in the page (MutationObserver). Behaviour is the same as after any other drop.
+
+Still not testable here: a real mobile network going half-open; actual Cloudflare billing of auto-responses
+(checked in the docs only, verify in the dashboard after deploy); hidden-tab pausing is unit-tested, not E2E
+(Playwright pages are always visible).
 
 ## Phase 8 — README, docs, deploy

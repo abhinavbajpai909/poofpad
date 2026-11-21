@@ -3,15 +3,15 @@
 Binary WebSocket frames on `GET /ws/<padId>`. The first byte is the frame type; the rest is the payload.
 All encrypted payloads are `iv (12 bytes) || AES-GCM ciphertext`, with a fresh random IV per message.
 
-| Type              | Value | Direction   | Payload                                                | Stored?                   |
-| ----------------- | ----- | ----------- | ------------------------------------------------------ | ------------------------- |
-| `UPDATE`          | 1     | C→S→others  | encrypted Yjs update                                   | yes, 1 row                |
-| `AWARENESS`       | 2     | C→S→others  | encrypted awareness update                             | no                        |
-| `SYNC_ALL`        | 3     | S→C on join | all stored rows, length-prefixed                       | —                         |
-| `COMPACT_REQUEST` | 4     | S→one C     | uint32 `upToSeq`                                       | —                         |
-| `SNAPSHOT`        | 5     | C→S         | uint32 `upToSeq` + encrypted `Y.encodeStateAsUpdate`   | replaces rows ≤ `upToSeq` |
-| `INFO`            | 6     | S→C         | JSON `{ peers, expiresAt }` on join and on peer change | —                         |
-| `ERROR`           | 7     | S→C         | uint8 `closeCode − 4000`, then close with `closeCode`  | —                         |
+| Type              | Value | Direction   | Payload                                                      | Stored?                   |
+| ----------------- | ----- | ----------- | ------------------------------------------------------------ | ------------------------- |
+| `UPDATE`          | 1     | C→S→others  | encrypted Yjs update                                         | yes, 1 row                |
+| `AWARENESS`       | 2     | C→S→others  | encrypted awareness update                                   | no                        |
+| `SYNC_ALL`        | 3     | S→C on join | all stored rows, length-prefixed                             | —                         |
+| `COMPACT_REQUEST` | 4     | S→one C     | uint32 `upToSeq`                                             | —                         |
+| `SNAPSHOT`        | 5     | C→S         | uint32 `upToSeq` + encrypted document state (`compactState`) | replaces rows ≤ `upToSeq` |
+| `INFO`            | 6     | S→C         | JSON `{ peers, expiresAt, now }` on join and on peer change  | —                         |
+| `ERROR`           | 7     | S→C         | uint8 `closeCode − 4000`, then close with `closeCode`        | —                         |
 
 ## Close codes
 
@@ -25,8 +25,8 @@ All encrypted payloads are `iv (12 bytes) || AES-GCM ciphertext`, with a fresh r
 | 4009 | pad full     |
 | 4013 | too large    |
 
-`1003` (unsupported data) is also used when a client sends a text frame, an unknown frame type, or a
-server-to-client frame type.
+`1003` (unsupported data) is also used when a client sends a text frame other than the heartbeat ping, an
+unknown frame type, or a server-to-client frame type.
 
 ## Encodings
 
@@ -38,11 +38,12 @@ server-to-client frame type.
   as the whole pad. Both are far below the Durable Object limits (8 MB per SQLite row/BLOB, 32 MiB per WebSocket
   message). An oversize frame closes the socket with `4013`.
 - `COMPACT_REQUEST` payload: `uint32 upToSeq` (≥ 1).
-- `SNAPSHOT` payload: `uint32 upToSeq || encrypted Y.encodeStateAsUpdate(doc)` (data must be non-empty).
+- `SNAPSHOT` payload: `uint32 upToSeq || encrypted compactState(doc)` (a Yjs update; data must be non-empty).
 - `ERROR` payload: one byte, `closeCode − 4000` (e.g. `5` = service busy, `13` = too large). The server then
   closes with that close code. Clients prefer the `ERROR` code over the close code, in case a proxy rewrites it.
-- `INFO` payload: UTF-8 JSON `{ "peers": <int>, "expiresAt": <unix ms> }`. `peers` counts open sockets
-  including the receiver.
+- `INFO` payload: UTF-8 JSON `{ "peers": <int>, "expiresAt": <unix ms>, "now": <unix ms> }`. `peers` counts
+  open sockets including the receiver. `now` is the server clock when the frame was sent; the client keeps
+  `now − Date.now()` as a clock offset so the countdown is right even when the device clock is wrong.
 
 ## Encryption
 
@@ -76,6 +77,27 @@ server-to-client frame type.
    its awareness as `null`.
 6. On close the server broadcasts a new `INFO`. Clients reconnect with backoff (0.5 s doubling to 10 s, jittered)
    unless the close code is terminal (any `4xxx` except `4008`, or `1003`).
+7. A connection can die without closing (common on mobile networks); see Heartbeat. A client that gives up on
+   a connection closes it with `1000` and reconnects as in step 6. Edits made meanwhile were kept locally and
+   go out as one diff after the next `SYNC_ALL` (step 3).
+
+## Heartbeat
+
+- The only text frames. While the tab is visible, the client sends the text frame `ping` every 25 s
+  (`HEARTBEAT_INTERVAL_MS`). The answer is the text frame `pong`. Both are fixed strings with no content.
+- The Durable Object registers the pair with `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping",
+"pong"))`. The Cloudflare runtime answers it itself: the object is not woken from hibernation, `webSocketMessage`
+  never runs (so pings don't count towards the 40/s rate limit), nothing is stored or logged. Cloudflare's pricing
+  page: auto-responses "will not incur additional wall-clock time, and so they will not be charged".
+- If no `pong` arrives within 10 s of a ping (`HEARTBEAT_TIMEOUT_MS`), the client treats the connection as dead:
+  it shows the offline banner, closes the socket with `1000` and reconnects with the usual backoff. Only a
+  `pong` counts as proof; other frames could still arrive on a link whose upload direction is dead.
+- Hidden tabs don't ping (no cost for idle background tabs). When a tab becomes visible again it pings at once,
+  since that is when a connection (e.g. after a phone slept) is most likely dead. Worst case while visible, a
+  dead connection is noticed after 35 s; after becoming visible, after 10 s.
+- The browser's `offline` event gives up on the connection at once (banner shown). While `navigator.onLine` is
+  false the client does not retry (it checks again every 10 s); the `online` event reconnects at once with the
+  backoff reset.
 
 ## Limits
 
@@ -99,11 +121,14 @@ server-to-client frame type.
 
 1. After storing an `UPDATE` as row `seq`, if the pad has more than 300 rows, or more than 1 MB in the rows after
    the oldest one (the base snapshot), the server sends `COMPACT_REQUEST(seq)` to the socket that wrote that row
-   and records `seq` in the socket's attachment. At most one request per 10 s per pad; an unanswered request is
-   simply made again later, possibly to another client.
-2. The client captures `Y.encodeStateAsUpdate(doc)` immediately (it has applied every row up to `seq`: its own
-   rows, plus everything received before the request, in order), encrypts it like any document payload
-   (`Purpose.Doc`), and sends `SNAPSHOT(seq, data)`.
+   and records `seq` in the socket's attachment. While a request is unanswered, no other is sent for 10 s (then
+   it is made again, possibly to another client); once a snapshot has been applied, the next request may go out
+   at once.
+2. The client captures the document state immediately (it has applied every row up to `seq`: its own rows, plus
+   everything received before the request, in order), encrypts it like any document payload (`Purpose.Doc`), and
+   sends `SNAPSHOT(seq, data)`. The state is taken from a fresh copy of the document (`compactState`), where Yjs
+   garbage-collects the content of deleted text; the live document keeps it for undo. So a snapshot is about the
+   size of the current text, however much was pasted and deleted before.
 3. The server accepts it only from the socket that was asked, for exactly that `seq`, once. If the oldest stored
    row is already at `seq` or later (a newer snapshot landed first), it is stale and ignored. Otherwise, in one
    transaction: delete rows `seq ≤ upToSeq`, then insert the snapshot at `seq = upToSeq`. Rows with

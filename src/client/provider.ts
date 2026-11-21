@@ -15,6 +15,8 @@ import {
 } from "../shared/limits";
 import {
   FrameType,
+  HEARTBEAT_PING,
+  HEARTBEAT_PONG,
   type PadInfo,
   decodeCompactRequest,
   decodeError,
@@ -25,6 +27,7 @@ import {
 } from "../shared/protocol";
 import { Purpose, decrypt, encrypt } from "./crypto";
 import { MAX_UPDATE_BYTES } from "./edit-limit";
+import { type Heartbeat, startHeartbeat } from "./heartbeat";
 import { createSerialQueue } from "./serial-queue";
 import { encodeSnapshotFrame } from "./snapshot";
 
@@ -51,6 +54,9 @@ interface AwarenessChange {
 const REMOTE = Symbol("remote");
 
 const RETRYABLE_CLOSE_CODES: ReadonlySet<number> = new Set([CloseCode.RateLimited]);
+
+/** Our own close of a connection we gave up on; not terminal, so the client reconnects. */
+const CLOSE_ABANDONED = 1000;
 
 function isTerminalClose(code: number): boolean {
   return code >= 4000 ? !RETRYABLE_CLOSE_CODES.has(code) : code === CloseCode.UnsupportedData;
@@ -83,6 +89,7 @@ export function connectPad(
   let updateTimer: ReturnType<typeof setTimeout> | undefined;
   let awarenessTimer: ReturnType<typeof setTimeout> | undefined;
   let awarenessDirty = false;
+  let heartbeat: Heartbeat | null = null;
   let pendingUpdates: Uint8Array[] = [];
   let pendingBytes = 0;
   const outbox = createSerialQueue();
@@ -176,7 +183,11 @@ export function connectPad(
     doc.off("update", onDocUpdate);
     awareness.off("update", onAwarenessUpdate);
     window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
     window.removeEventListener("pagehide", onPageHide);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    heartbeat?.stop();
+    heartbeat = null;
     const current = socket;
     socket = null;
     current?.close(1000);
@@ -304,6 +315,8 @@ export function connectPad(
     const data: unknown = event.data;
     if (data instanceof ArrayBuffer) {
       inbox(() => handleMessage(ws, data));
+    } else if (data === HEARTBEAT_PONG && socket === ws) {
+      heartbeat?.pong();
     }
   }
 
@@ -313,14 +326,31 @@ export function connectPad(
   }
 
   function onClose(ws: WebSocket, event: CloseEvent): void {
+    if (socket === ws && !stopped) {
+      connectionLost(serverError ?? event.code);
+    }
+  }
+
+  /**
+   * A connection that is dead without having closed (no pong, or the browser went offline): give up on it
+   * now instead of waiting for a close that can take minutes on mobile networks. Edits made meanwhile are
+   * kept and sent as one diff after the reconnect sync, like after any other drop.
+   */
+  function abandon(ws: WebSocket): void {
     if (socket !== ws || stopped) {
       return;
     }
+    connectionLost(CLOSE_ABANDONED);
+    ws.close(CLOSE_ABANDONED);
+  }
+
+  function connectionLost(code: number): void {
+    heartbeat?.stop();
+    heartbeat = null;
     socket = null;
     synced = false;
     lastPeers = 0;
     dropRemoteAwareness();
-    const code = serverError ?? event.code;
     serverError = null;
     if (isTerminalClose(code)) {
       stop();
@@ -328,7 +358,7 @@ export function connectPad(
       return;
     }
     handlers.onStatus("offline");
-    reconnectTimer = setTimeout(connect, reconnectDelay(attempt));
+    reconnectTimer = setTimeout(reconnectWhenOnline, reconnectDelay(attempt));
     attempt += 1;
   }
 
@@ -337,16 +367,45 @@ export function connectPad(
     handlers.onStatus("connecting");
     const ws = new WebSocket(socketUrl(padId));
     ws.binaryType = "arraybuffer";
+    ws.addEventListener("open", () => {
+      if (socket === ws) {
+        heartbeat = startHeartbeat({
+          ping: () => ws.send(HEARTBEAT_PING),
+          onDead: () => abandon(ws),
+          isVisible: () => document.visibilityState === "visible",
+        });
+      }
+    });
     ws.addEventListener("message", (event) => onMessage(ws, event));
     ws.addEventListener("close", (event) => onClose(ws, event));
     socket = ws;
   }
 
+  /** While the browser says it is offline, attempts are pointless: wait for "online" (or check again later). */
+  function reconnectWhenOnline(): void {
+    if (navigator.onLine) {
+      connect();
+    } else {
+      reconnectTimer = setTimeout(reconnectWhenOnline, RECONNECT_MAX_MS);
+    }
+  }
+
   function onOnline(): void {
     if (reconnectTimer !== undefined) {
       clearTimeout(reconnectTimer);
+      attempt = 0;
       connect();
     }
+  }
+
+  function onOffline(): void {
+    if (socket !== null) {
+      abandon(socket);
+    }
+  }
+
+  function onVisibilityChange(): void {
+    heartbeat?.visibilityChanged();
   }
 
   function onPageHide(): void {
@@ -363,7 +422,9 @@ export function connectPad(
   doc.on("update", onDocUpdate);
   awareness.on("update", onAwarenessUpdate);
   window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
   window.addEventListener("pagehide", onPageHide);
+  document.addEventListener("visibilitychange", onVisibilityChange);
   connect();
   return { editBudget };
 }

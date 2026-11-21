@@ -20,6 +20,7 @@
     { "path": "./src/client" },
     { "path": "./src/worker" },
     { "path": "./tests" },
+    { "path": "./tests/e2e" },
     { "path": "./tsconfig.tools.json" }
   ]
 }

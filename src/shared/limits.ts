@@ -26,3 +26,8 @@ export const COMPACT_MAX_BYTES = 1024 * 1024;
 export const COMPACT_RETRY_MS = 10_000;
 /** If deleting an expired pad fails (e.g. free-plan quota), the alarm tries again after this long. */
 export const BURN_RETRY_MS = 10 * 60_000;
+
+/** While the tab is visible, the client sends a heartbeat ping this often ... */
+export const HEARTBEAT_INTERVAL_MS = 25_000;
+/** ... and treats the connection as dead if the pong has not arrived this long after the ping. */
+export const HEARTBEAT_TIMEOUT_MS = 10_000;

@@ -15,6 +15,8 @@ export interface TestSocket {
   socket: WebSocket;
   /** Every frame received so far, in order. */
   frames: Frame[];
+  /** Every text frame received (only heartbeat pongs are expected). */
+  texts: string[];
   next(): Promise<Frame>;
   closed: Promise<number>;
 }
@@ -44,6 +46,7 @@ export async function open(
   }
   socket.binaryType = "arraybuffer";
   const frames: Frame[] = [];
+  const texts: string[] = [];
   const queue: Frame[] = [];
   const waiters: ((frame: Frame) => void)[] = [];
   let resolveClosed: (code: number) => void = () => undefined;
@@ -51,6 +54,10 @@ export async function open(
     resolveClosed = resolve;
   });
   socket.addEventListener("message", (event) => {
+    if (typeof event.data === "string") {
+      texts.push(event.data);
+      return;
+    }
     if (!(event.data instanceof ArrayBuffer)) {
       throw new Error("expected binary frame");
     }
@@ -71,6 +78,7 @@ export async function open(
   return {
     socket,
     frames,
+    texts,
     closed,
     next: () => {
       const frame = queue.shift();

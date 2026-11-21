@@ -22,7 +22,9 @@
     "format": "prettier --write .",
     "test": "run-s build vitest",
     "vitest": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "run-s test:e2e:main test:e2e:webkit",
+    "test:e2e:main": "playwright test --project=chromium --project=firefox --project=pixel-7",
+    "test:e2e:webkit": "playwright test --project=webkit --project=iphone-14 --workers=1",
     "check": "run-s typecheck lint test",
     "deploy": "run-s check build deploy:wrangler",
     "deploy:wrangler": "wrangler deploy"

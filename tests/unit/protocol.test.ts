@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { CloseCode, isErrorCloseCode } from "../../src/shared/codes";
-import { MAX_FRAME_BYTES, MAX_SNAPSHOT_FRAME_BYTES } from "../../src/shared/limits";
+import {
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_TIMEOUT_MS,
+  MAX_FRAME_BYTES,
+  MAX_SNAPSHOT_FRAME_BYTES,
+} from "../../src/shared/limits";
 import {
   FrameType,
+  HEARTBEAT_PING,
+  HEARTBEAT_PONG,
   decodeCompactRequest,
   decodeError,
   decodeFrame,
@@ -76,17 +83,21 @@ describe("SYNC_ALL payload", () => {
 
 describe("INFO payload", () => {
   it("round-trips", () => {
-    const info = { peers: 3, expiresAt: 1_800_000_000_000 };
+    const info = { peers: 3, expiresAt: 1_800_000_000_000, now: 1_799_999_000_000 };
     expect(decodeInfo(encodeInfo(info))).toEqual(info);
   });
 
   it.each([
     "not json",
     "null",
-    '{"peers":-1,"expiresAt":1}',
-    '{"peers":1.5,"expiresAt":1}',
-    '{"peers":"1","expiresAt":1}',
+    '{"peers":-1,"expiresAt":1,"now":1}',
+    '{"peers":1.5,"expiresAt":1,"now":1}',
+    '{"peers":"1","expiresAt":1,"now":1}',
     '{"peers":1}',
+    '{"peers":1,"expiresAt":1}',
+    '{"peers":1,"expiresAt":1,"now":-1}',
+    '{"peers":1,"expiresAt":1,"now":"1"}',
+    '{"peers":1,"expiresAt":1,"now":1.5}',
   ])("rejects %s", (text) => {
     expect(decodeInfo(new TextEncoder().encode(text))).toBeNull();
   });
@@ -157,5 +168,21 @@ describe("ERROR payload", () => {
     ["two bytes", bytes(5, 5)],
   ])("rejects %s", (_name, payload) => {
     expect(decodeError(payload)).toBeNull();
+  });
+});
+
+describe("heartbeat", () => {
+  it("ping and pong are fixed, distinct, content-free strings within the auto-response limit", () => {
+    // Cloudflare limits a WebSocketRequestResponsePair's request and response to 2,048 characters each.
+    expect(HEARTBEAT_PING).toBe("ping");
+    expect(HEARTBEAT_PONG).toBe("pong");
+    expect(HEARTBEAT_PING.length).toBeLessThanOrEqual(2048);
+    expect(HEARTBEAT_PONG.length).toBeLessThanOrEqual(2048);
+  });
+
+  it("the pong timeout is shorter than the ping interval, so pings never overlap", () => {
+    expect(HEARTBEAT_TIMEOUT_MS).toBeLessThan(HEARTBEAT_INTERVAL_MS);
+    expect(HEARTBEAT_INTERVAL_MS).toBe(25_000);
+    expect(HEARTBEAT_TIMEOUT_MS).toBe(10_000);
   });
 });

@@ -110,6 +110,22 @@ describe("compaction (test 7)", () => {
     expect(rows[0]?.data).toEqual(fromB);
   });
 
+  it("asks again at once after an answered request, without waiting for the 10 s retry", async () => {
+    const { padId, a, b } = await twoClients();
+    await sendUpdate(a, b, bytes(10, 1));
+    await sendUpdate(a, b, bytes(BIG, 2));
+    await sendUpdate(a, b, bytes(BIG, 3));
+    expect(decodeCompactRequest(await nextOfType(a, FrameType.CompactRequest))).toBe(3);
+    sendSnapshot(a, 3, bytes(BIG, 5));
+    await settle(a, b);
+    expect((await storedRows(padId)).map((row) => row.seq)).toEqual([3, 4]);
+
+    // Rows after the (now large) snapshot pass 1 MB again well within 10 s.
+    await sendUpdate(a, b, bytes(BIG, 6));
+    await sendUpdate(a, b, bytes(BIG, 7));
+    expect(decodeCompactRequest(await nextOfType(a, FrameType.CompactRequest))).toBe(6);
+  });
+
   it("closes the socket on a malformed snapshot", async () => {
     const { a } = await twoClients();
     a.socket.send(encodeFrame(FrameType.Snapshot, new Uint8Array([0, 0, 0, 1])));

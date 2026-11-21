@@ -161,7 +161,7 @@ export async function showPad(root: HTMLElement, padId: string): Promise<void> {
       banner.hidden = next !== "offline";
     },
     onInfo(info) {
-      sidebar.setExpiry(info.expiresAt);
+      sidebar.setExpiry(info.expiresAt, info.now);
     },
     onClosed(code) {
       teardown();

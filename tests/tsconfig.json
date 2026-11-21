@@ -17,6 +17,8 @@
     "../src/client/pad-link.ts",
     "../src/client/edit-limit.ts",
     "../src/client/snapshot.ts",
+    "../src/client/serial-queue.ts",
+    "../src/client/heartbeat.ts",
     "../worker-configuration.d.ts"
   ]
 }

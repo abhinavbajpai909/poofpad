@@ -1,5 +1,5 @@
-import { Compartment, Prec } from "@codemirror/state";
-import { keymap } from "@codemirror/view";
+import { Compartment, EditorState, Prec } from "@codemirror/state";
+import { highlightSpecialChars, keymap } from "@codemirror/view";
 import { EditorView, basicSetup } from "codemirror";
 import { yCollab, yUndoManagerKeymap } from "y-codemirror.next";
 import type { Awareness } from "y-protocols/awareness";
@@ -8,6 +8,14 @@ import { type EditLimit, editLimitFilter, limitUndoManager } from "./edit-limit"
 import { darkTheme, highlighting, lightTheme } from "./editor-theme";
 import { type LanguageId, loadLanguage } from "./languages";
 import { type Theme } from "./theme";
+
+/**
+ * CodeMirror's default special characters minus U+000D (carriage return). With only "\n" as the line
+ * separator, a "\r" from pasted Windows text stays in the document, so text round-trips exactly (CRLF
+ * included); it is drawn as plain whitespace instead of a red placeholder. CodeMirror needs the g flag.
+ */
+const SPECIAL_CHARS_WITHOUT_CR =
+  /[\u0000-\u0008\u000a-\u000c\u000e-\u001f\u007f-\u009f\u00ad\u061c\u200b\u200e\u200f\u2028\u2029\u202d\u202e\u2066\u2067\u2069\ufeff\ufff9-\ufffc]/gu;
 
 export interface PadEditor {
   setLanguage(id: LanguageId): void;
@@ -31,6 +39,9 @@ export function createEditor(
     doc: text.toString(),
     extensions: [
       basicSetup,
+      // Every client splits lines on "\n" only, so the CodeMirror text always equals the shared Y.Text.
+      EditorState.lineSeparator.of("\n"),
+      highlightSpecialChars({ specialChars: SPECIAL_CHARS_WITHOUT_CR }),
       EditorView.lineWrapping,
       highlighting,
       theme.of(initialTheme === "dark" ? darkTheme : lightTheme),

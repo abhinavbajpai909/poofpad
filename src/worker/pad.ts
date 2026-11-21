@@ -14,6 +14,8 @@ import {
 } from "../shared/limits";
 import {
   FrameType,
+  HEARTBEAT_PING,
+  HEARTBEAT_PONG,
   decodeFrame,
   decodeSnapshot,
   encodeCompactRequest,
@@ -68,6 +70,13 @@ export class Pad extends DurableObject<Env> {
   private stats: StoredStats | null = null;
   /** Throttles COMPACT_REQUEST. Losing it to hibernation only means asking again, which is harmless. */
   private lastCompactRequestAt = 0;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // The runtime answers heartbeat pings itself, even while the object hibernates: no wake-up, no duration,
+    // not billed, and they never reach webSocketMessage (so they don't count towards the rate limit).
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(HEARTBEAT_PING, HEARTBEAT_PONG));
+  }
 
   async create(ttlSeconds: number, adminHash: string): Promise<CreateResult> {
     if (this.readMeta() !== null) {
@@ -278,7 +287,7 @@ export class Pad extends DurableObject<Env> {
     if (oldest === null || oldest >= snapshot.upToSeq) {
       return;
     }
-    this.tryWrite(ws, () => {
+    const compacted = this.tryWrite(ws, () => {
       this.ctx.storage.transactionSync(() => {
         sql.exec("DELETE FROM updates WHERE seq <= ?", snapshot.upToSeq);
         sql.exec(
@@ -289,6 +298,10 @@ export class Pad extends DurableObject<Env> {
       });
     });
     this.stats = null;
+    if (compacted) {
+      // The 10 s wait is only for unanswered requests; after an answer, the next one may go out at once.
+      this.lastCompactRequestAt = 0;
+    }
   }
 
   private async peerLeft(ws: WebSocket): Promise<void> {
@@ -393,7 +406,7 @@ export class Pad extends DurableObject<Env> {
     const sockets = this.openSockets(leaving);
     const frame = encodeFrame(
       FrameType.Info,
-      encodeInfo({ peers: sockets.length, expiresAt: meta.expiresAt }),
+      encodeInfo({ peers: sockets.length, expiresAt: meta.expiresAt, now: Date.now() }),
     );
     for (const socket of sockets) {
       socket.send(frame);
