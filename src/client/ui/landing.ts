@@ -63,7 +63,7 @@ export function showLanding(root: HTMLElement): void {
           fail(result.busy);
           return;
         }
-        rememberAdminToken(result.pad.padId, result.pad.adminToken);
+        rememberAdminToken(result.pad.padId, result.pad.adminToken, result.pad.expiresAt);
         location.assign(`/p/${result.pad.padId}#${generateKeyText()}`);
       },
       () => fail(false),

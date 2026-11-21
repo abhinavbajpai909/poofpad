@@ -69,7 +69,14 @@ unknown frame type, or a server-to-client frame type.
 1. Client opens `GET /ws/<padId>`. Unknown or expired pad → socket accepted, sent `ERROR`, then closed with `4004`.
 2. Server sends `SYNC_ALL`, then broadcasts `INFO` to everyone (including the new client).
 3. Client applies all rows. If its local document has anything the server does not (offline edits, compared by
-   Yjs snapshot: state vector + delete set), it sends one `UPDATE` with exactly the missing part.
+   Yjs snapshot: state vector + delete set), it sends the missing part as one `UPDATE`. That diff can be larger
+   than one frame even though every edit fitted: an update sent just before the connection died can be lost in
+   flight, and then it and the offline edits are both missing. A Yjs update cannot be cut into smaller ones, so the
+   client keeps a log of the updates it made itself (`local-log.ts`: small neighbours merged, at most 16 MB) and,
+   when the diff does not fit, sends the logged updates the server lacks (checked against the `SYNC_ALL` state),
+   packed into frames that each fit. Log entries the server is known to hold are dropped at every sync. If old
+   entries had to be dropped (more than 16 MB of local updates since the server last had everything), the diff is
+   sent as before and the server may answer `4013`.
 4. Local edits are merged for 250 ms (`Y.mergeUpdates`) and sent as one `UPDATE`; the server stores it as one row
    and relays it unchanged to the other sockets.
 5. Awareness is throttled to one frame per 250 ms and relayed, never stored. When `INFO.peers` increases, every
@@ -80,6 +87,22 @@ unknown frame type, or a server-to-client frame type.
 7. A connection can die without closing (common on mobile networks); see Heartbeat. A client that gives up on
    a connection closes it with `1000` and reconnects as in step 6. Edits made meanwhile were kept locally and
    go out as one diff after the next `SYNC_ALL` (step 3).
+
+## Key check and sharing
+
+The first stored row of a pad is its key check (see Encryption), written by the first client to sync. Whoever
+writes it first decides which key counts as right: a client with a different key that reaches an empty pad
+before the creator's client has synced would make the creator see "Wrong key". Pad IDs are random and only the
+creator's browser (and the server) knows one until the link is shared, so the client closes the remaining window:
+the **Copy link** and **QR code** buttons stay disabled until this client has synced for the first time (its key
+check, if it was needed, is sent just before the status turns "Connected"), and stay enabled after that.
+
+## Admin token storage
+
+The creator's admin token is stored in `localStorage` as `admin:<padId>` = `{"token", "expiresAt"}` (the pad's
+expiry from the server). Every page load removes entries whose pad expired more than an hour ago (the hour keeps a
+device clock that runs fast from dropping the token of a live pad) and entries in any other format. An entry is
+also removed when the pad is ended, found expired or not found.
 
 ## Heartbeat
 

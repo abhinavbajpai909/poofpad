@@ -208,6 +208,12 @@ test.describe("pad basics", () => {
     await page.waitForURL(/\/p\//);
     await waitOnline(page);
     const url = new URL(page.url());
+    const padId = url.pathname.split("/").pop() ?? "";
+    const stored = await page.evaluate((id) => localStorage.getItem(`admin:${id}`), padId);
+    const entry = JSON.parse(stored ?? "null") as { token: string; expiresAt: number };
+    expect(typeof entry.token).toBe("string");
+    expect(entry.expiresAt).toBeGreaterThan(Date.now());
+    expect(entry.expiresAt).toBeLessThanOrEqual(Date.now() + 3600 * 1000 + 60_000);
     const other = await newClient(browser, consoleGuard);
     await openPad(other, url.pathname + url.hash);
 
@@ -224,6 +230,7 @@ test.describe("pad basics", () => {
     await page.getByRole("button", { name: "End pad now" }).click();
     await expectScreen(page, "This pad has expired");
     await expectScreen(other, "This pad has expired");
+    expect(await page.evaluate((id) => localStorage.getItem(`admin:${id}`), padId)).toBeNull();
     await other.reload();
     await expectScreen(other, "Pad not found");
   });

@@ -28,6 +28,7 @@ import {
 import { Purpose, decrypt, encrypt } from "./crypto";
 import { MAX_UPDATE_BYTES } from "./edit-limit";
 import { type Heartbeat, startHeartbeat } from "./heartbeat";
+import { createLocalLog } from "./local-log";
 import { createSerialQueue } from "./serial-queue";
 import { encodeSnapshotFrame } from "./snapshot";
 
@@ -92,6 +93,7 @@ export function connectPad(
   let heartbeat: Heartbeat | null = null;
   let pendingUpdates: Uint8Array[] = [];
   let pendingBytes = 0;
+  const localLog = createLocalLog();
   const outbox = createSerialQueue();
   const inbox = createSerialQueue();
 
@@ -152,6 +154,7 @@ export function connectPad(
     if (origin === REMOTE) {
       return;
     }
+    localLog.add(update);
     if (pendingBytes + update.byteLength > MAX_UPDATE_BYTES) {
       flushUpdates();
     }
@@ -224,14 +227,28 @@ export function connectPad(
     clearTimeout(updateTimer);
     updateTimer = undefined;
     if (rows.length === 0 || !Y.equalSnapshots(Y.snapshot(doc), Y.snapshot(serverDoc))) {
-      sendEncrypted(
-        FrameType.Update,
-        Purpose.Doc,
-        Y.encodeStateAsUpdate(doc, Y.encodeStateVector(serverDoc)),
-      );
+      for (const frame of framesForServer(serverDoc)) {
+        sendEncrypted(FrameType.Update, Purpose.Doc, frame);
+      }
+      localLog.prune(serverDoc);
+    } else {
+      localLog.clear();
     }
     serverDoc.destroy();
     handlers.onStatus("online");
+  }
+
+  /**
+   * What the server lacks, as frames that each fit. Normally one diff. After a drop it can be larger than a
+   * frame (an update lost in flight plus offline edits, each of which fitted); then the logged pieces are
+   * resent instead. Only if the log has dropped old entries is the diff sent anyway.
+   */
+  function framesForServer(serverDoc: Y.Doc): Uint8Array[] {
+    const diff = Y.encodeStateAsUpdate(doc, Y.encodeStateVector(serverDoc));
+    if (diff.byteLength <= MAX_UPDATE_BYTES) {
+      return [diff];
+    }
+    return localLog.missingFrom(serverDoc, MAX_UPDATE_BYTES) ?? [diff];
   }
 
   async function handleUpdate(ws: WebSocket, payload: Uint8Array): Promise<void> {

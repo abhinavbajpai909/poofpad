@@ -19,6 +19,8 @@
     "../src/client/snapshot.ts",
     "../src/client/serial-queue.ts",
     "../src/client/heartbeat.ts",
+    "../src/client/local-log.ts",
+    "../src/client/admin-token.ts",
     "../worker-configuration.d.ts"
   ]
 }

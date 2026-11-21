@@ -1,5 +1,5 @@
 # Applies to static assets the platform serves directly (the Worker sets the same headers on its own
-# responses). Keep in sync with SECURITY_HEADERS in src/worker/http.ts; tests/unit/headers-file.test.ts checks it.
+# responses). Keep in sync with SECURITY_HEADERS in src/worker/http.ts; tests/unit/config.test.ts checks it.
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains

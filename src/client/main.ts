@@ -1,3 +1,4 @@
+import { forgetStaleAdminTokens } from "./admin-token";
 import { parseRoute } from "./router";
 import { showLanding } from "./ui/landing";
 import { showMessage } from "./ui/message";
@@ -7,6 +8,7 @@ import { showPrivacy } from "./ui/privacy";
 const app = document.getElementById("app");
 
 if (app) {
+  forgetStaleAdminTokens();
   const route = parseRoute(location.pathname);
   switch (route.kind) {
     case "landing":

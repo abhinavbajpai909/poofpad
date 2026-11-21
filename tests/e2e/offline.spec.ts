@@ -7,6 +7,7 @@ import {
   focusEditorEnd,
   newClient,
   openPad,
+  paste,
   test,
   waitOnline,
 } from "./helpers";
@@ -17,6 +18,8 @@ import { controlSocket } from "./network";
 const RECONNECT_TIMEOUT = 25_000;
 /** The longest a dead connection can go unnoticed while the tab is visible: one ping interval plus its timeout. */
 const DETECTION_MS = HEARTBEAT_INTERVAL_MS + HEARTBEAT_TIMEOUT_MS;
+/** First byte of an UPDATE frame (src/shared/protocol.ts). */
+const UPDATE_FRAME = 1;
 /** "At once": well under the smallest reconnect backoff step plus a sync. */
 const IMMEDIATE_MS = 3_000;
 /** `controlSocket` records text frames (heartbeat pings) as type -1. */
@@ -196,5 +199,52 @@ test.describe("offline and reconnect (test 15)", () => {
     expect(merged).toContain(" A offline.");
     expect(merged).toContain(" B online.");
     expect(merged.length).toBe("shared. A offline. B online.".length);
+  });
+});
+
+test.describe("edits lost in flight (review item 2)", () => {
+  test("a large update lost in flight plus a large offline edit still reaches everyone after reconnect", async ({
+    page,
+    browser,
+    consoleGuard,
+  }) => {
+    const pad = await createPad(page);
+    const control = await controlSocket(page);
+    await openPad(page, pad.url);
+    const other = await newClient(browser, consoleGuard);
+    await openPad(other, pad.url);
+    await focusEditorEnd(page);
+    await page.keyboard.type("base");
+    await expectText(other, "base");
+
+    // The connection silently dies; A does not know yet. A's next 900 KB paste is sent (and flushed)
+    // but never reaches the server.
+    control.stall();
+    const updatesSent = () => control.sent.filter((type) => type === UPDATE_FRAME).length;
+    const before = updatesSent();
+    await focusEditorEnd(page);
+    await paste(page, { ascii: 900 * 1024 });
+    await expect.poll(updatesSent).toBeGreaterThan(before);
+    await control.drop();
+    await expect(page.locator(".banner")).toBeVisible();
+
+    // Offline, A pastes another 800 KB. Each edit fits a frame; together with the lost one they do not.
+    await focusEditorEnd(page);
+    await paste(page, { ascii: 800 * 1024 });
+    await focusEditorEnd(other);
+    await other.keyboard.type(" B online.");
+    await expectText(other, "base B online.");
+
+    control.reconnect();
+    await waitOnline(page);
+    const expectedLength = "base".length + 900 * 1024 + 800 * 1024 + " B online.".length;
+    await expect
+      .poll(async () => (await docText(page)).length, { timeout: RECONNECT_TIMEOUT })
+      .toBe(expectedLength);
+    await expect
+      .poll(async () => (await docText(other)).length, { timeout: RECONNECT_TIMEOUT })
+      .toBe(expectedLength);
+    expect(await docText(page)).toBe(await docText(other));
+    await expect(page.locator(".message-title")).toHaveCount(0);
   });
 });

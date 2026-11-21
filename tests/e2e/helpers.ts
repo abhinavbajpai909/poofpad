@@ -2,6 +2,7 @@ import {
   type Browser,
   type BrowserContext,
   type ConsoleMessage,
+  type Locator,
   type Page,
   type TestInfo,
   test as base,
@@ -13,6 +14,7 @@ export { expect };
 export interface CreatedPad {
   padId: string;
   adminToken: string;
+  expiresAt: number;
   /** Path plus `#key`, ready for `page.goto`. */
   url: string;
   key: string;
@@ -112,7 +114,11 @@ export async function tryCreatePad(page: Page, ttl: number): Promise<CreatedPad 
     return null;
   }
   expect(response.status(), "create pad").toBe(201);
-  const body = (await response.json()) as { padId: string; adminToken: string };
+  const body = (await response.json()) as {
+    padId: string;
+    adminToken: string;
+    expiresAt: number;
+  };
   const key = randomKey();
   return { ...body, key, url: `/p/${body.padId}#${key}` };
 }
@@ -127,10 +133,11 @@ export async function createPad(page: Page, ttl = 3600): Promise<CreatedPad> {
 
 /** Lets this context end the pad (the landing page stores the token the same way). */
 export async function becomeCreator(page: Page, pad: CreatedPad): Promise<void> {
-  await page.addInitScript(([padId, token]) => localStorage.setItem(`admin:${padId}`, token), [
-    pad.padId,
-    pad.adminToken,
-  ] as const);
+  await page.addInitScript(
+    ([padId, token, expiresAt]) =>
+      localStorage.setItem(`admin:${padId}`, JSON.stringify({ token, expiresAt })),
+    [pad.padId, pad.adminToken, pad.expiresAt] as const,
+  );
 }
 
 /** The configured base URL (BASE_URL for a deployed server, else the local wrangler dev). */
@@ -289,6 +296,11 @@ export async function openSidebar(page: Page): Promise<void> {
     await menu.click();
     await expect(page.locator("#pad-sidebar")).toHaveClass(/drawer-open/);
   }
+}
+
+/** A sidebar button as a locator (also when the phone drawer is closed), to check its state without clicking. */
+export function shareButton(page: Page, name: string): Locator {
+  return page.getByRole("button", { name, exact: true, includeHidden: true });
 }
 
 export async function sidebarButton(page: Page, name: string): Promise<void> {

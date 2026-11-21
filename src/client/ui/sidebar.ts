@@ -96,11 +96,24 @@ export function createSidebar(identity: Identity, actions: SidebarActions): Side
   languageSection.append(languageLabel, language);
 
   const share = section("Share");
+  const copyLink = button("Copy link", "btn", () => closeThen(actions.onCopyLink));
+  const qrCode = button("QR code", "btn", () => closeThen(actions.onQr));
   share.append(
-    button("Copy link", "btn", () => closeThen(actions.onCopyLink)),
+    copyLink,
     button("Copy all", "btn", () => closeThen(actions.onCopyAll)),
-    button("QR code", "btn", () => closeThen(actions.onQr)),
+    qrCode,
   );
+  /**
+   * The first row stored in a pad is its key check, written by the first client to sync. Sharing the link
+   * before this client has synced would let someone with a different key write it first and lock the
+   * creator out ("Wrong key"). So the link and the QR code wait for the first sync; after that they stay.
+   */
+  const shareHint = "Available once the pad is connected";
+  let linkEnabled = false;
+  for (const element of [copyLink, qrCode]) {
+    element.disabled = true;
+    element.title = shareHint;
+  }
 
   const users = createUserList(identity, actions.onName);
 
@@ -160,6 +173,13 @@ export function createSidebar(identity: Identity, actions: SidebarActions): Side
     setStatus(next) {
       statusText.textContent = STATUS_LABELS[next];
       statusRow.dataset.state = next;
+      if (next === "online" && !linkEnabled) {
+        linkEnabled = true;
+        for (const element of [copyLink, qrCode]) {
+          element.disabled = false;
+          element.removeAttribute("title");
+        }
+      }
     },
     setExpiry: countdown.set,
     setLanguage(id) {

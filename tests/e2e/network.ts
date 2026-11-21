@@ -7,7 +7,7 @@ export interface SocketControl {
   reconnect(): void;
   /**
    * Half-open connection: the live connection stays open but carries nothing in either direction, the
-   * way a dead mobile link often looks. New connections work normally.
+   * way a dead mobile link often looks. New connections work normally. `drop()` still closes it.
    */
   stall(): void;
   /** Frame types the client sent to the server (first byte of each binary frame). */
@@ -96,7 +96,7 @@ export async function controlSocket(page: Page): Promise<SocketControl> {
       online = true;
     },
     stall() {
-      for (const connection of live.splice(0)) {
+      for (const connection of live) {
         connection.stalled = true;
       }
     },

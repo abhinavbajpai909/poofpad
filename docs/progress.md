@@ -335,4 +335,47 @@ Still not testable here: a real mobile network going half-open; actual Cloudflar
 (checked in the docs only, verify in the dashboard after deploy); hidden-tab pausing is unit-tested, not E2E
 (Playwright pages are always visible).
 
+### Pre-deploy fixes from an external code review (2026-11-21)
+
+Final runs: `npm run check` 292 unit + worker tests passed (23 files); `npm run test:e2e` 231 passed, 3 skipped
+(clipboard in Firefox, WebKit, iPhone 14), 0 failed: Chromium, Firefox, Pixel 7 143 passed, 1 skipped in 4.7 min;
+WebKit, iPhone 14 88 passed, 2 skipped in 6.7 min. (An earlier run of this suite lost three Pixel 7 tests to
+`net::ERR_NETWORK_IO_SUSPENDED`, the OS suspending network I/O on the laptop, and stopped before WebKit; the same
+tests passed in the other browsers in that run, and a complete re-run is green.)
+
+1. **Typecheck failed on a fresh clone (real, confirmed).** `wrangler types` turns the `ALLOW_TEST_TTL` value from
+   `wrangler.jsonc` ("0") into the literal type `"0"` when there is no `.dev.vars`, so the comparisons with `"1"`
+   in `create-pad.ts` and `origin.ts` do not typecheck. Reproduced with `.dev.vars` renamed (exact errors from the
+   review). Fix: `"types": "wrangler types --strict-vars=false"` (type `string`). Verified: `npm run check` passes
+   with `.dev.vars` renamed; `.dev.vars` restored afterwards. `wrangler.jsonc` still has "0".
+2. **Oversized reconnect diff (real, reproduced first).** After a drop the client sent everything the server lacked
+   as one `UPDATE`. With a 900 KB paste lost in flight (connection half-open, then closed) and an 800 KB paste made
+   offline, the diff was ~1.7 MB: the server answered `4013`, the client showed "This pad is full", its editor was
+   torn down and B never received the text. The offline budget did not count the lost update because its batch had
+   already been flushed. Fix: `src/client/local-log.ts` keeps the updates this client made (each fits a frame);
+   when the diff does not fit, the logged updates the server lacks are resent, packed into frames that each fit.
+   A Yjs update cannot be cut into a prefix with the public API, which is why the pieces are kept instead.
+   Tests: `tests/unit/local-log.test.ts` (7), E2E `offline.spec.ts` "edits lost in flight" (failed before the fix,
+   passes after; stall + drop simulate the lost update). Limit: if more than 16 MB of local updates have piled up
+   since the server last held everything, old entries are dropped and the old behaviour (one diff, possible
+   `4013`) applies. The 16 MB log lives in memory until the next sync.
+3. **Key-check race (real, narrow).** Reproduced at flow level: a client with a different key that joins an empty
+   pad before the creator has synced writes the key-check row, and the creator sees "Wrong key"
+   (`key-check.spec.ts`, pins the behaviour). The legitimate flow only exposed it through the share buttons, which
+   existed before the socket connected. Fix: **Copy link** and **QR code** stay disabled (with a title) until this
+   client has synced for the first time, then stay enabled. **Copy all** is not held back (no link). Residual risk:
+   someone who learns the pad ID by other means (the server sees it) can still lock the creator out in the
+   first moments; no secret is exposed. Not changed: the key check is sent just before the status turns
+   "Connected", without a server acknowledgement, so a lost first frame is theoretically possible.
+4. **Admin tokens never removed (real).** `admin:<padId>` now stores `{token, expiresAt}`; every page load removes
+   entries expired for more than an hour (grace so a fast device clock cannot drop a live pad's token) and entries
+   in any other format (old plain-text entries from earlier builds count: they carry no expiry); the entry is also
+   removed when the pad is ended, found expired or not found (this was already so). Tests:
+   `tests/unit/admin-token.test.ts` (6), `admin-token.spec.ts`, and storage checks in the End-now test.
+5. **`public/_headers` comment** pointed to a test that does not exist; it names `tests/unit/config.test.ts`.
+
+Verified vs assumed: items 1–4 were reproduced or measured by tests that failed before the fix (1: the type errors;
+2: E2E "edits lost in flight"; 3: the race test, and the disabled-button test failed with enabled buttons). The 16 MB
+log cap and the one-hour grace are my choices, not measured needs.
+
 ## Phase 8 — README, docs, deploy
