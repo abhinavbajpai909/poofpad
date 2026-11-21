@@ -91,7 +91,7 @@ export async function serveAppShell(request: Request, env: Env): Promise<Respons
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
     response.headers.set(name, value);
   }
-  response.headers.set("Cache-Control", "no-cache");
+  response.headers.set("Cache-Control", "no-cache, no-transform");
   return response;
 }
 

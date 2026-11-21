@@ -2,6 +2,8 @@
 
 An end-to-end encrypted, real-time shared text pad that deletes itself at an expiry its creator chooses.
 
+Live at https://poofpad.com
+
 ## What it is
 
 PoofPad is a shared notepad. Create a pad, pick how long it lives (10 minutes, 1 hour, 6 hours or 24 hours), and send
@@ -77,7 +79,8 @@ What this protects, and what it does not:
   server. Anyone who has the full link can read and edit the pad. There are no read-only links and no passwords.
 - **What the server can see:** the pad ID, when a pad was created and when it expires, the timing and size of messages,
   how many people are connected, and IP addresses at the Cloudflare edge (as for any website behind Cloudflare). It
-  cannot see the text, the key, or what anyone types.
+  cannot see the text, the key, or what anyone types. Cloudflare also adds its own Network Error Logging headers
+  (Report-To/NEL), which report failed requests to Cloudflare; the URL fragment with the key is never sent to servers.
 - **You must trust the JavaScript the site serves.** The code that encrypts and decrypts is delivered by the same
   server. A malicious or compromised deployment could serve code that leaks keys or text. If that matters to you, run
   your own copy.
@@ -117,10 +120,12 @@ reach them. Writes then fail until 00:00 UTC and the app shows a "service busy" 
   250 ms before they are encrypted and sent.
 - While offline, the client keeps a log of its own edits in memory to resend them after reconnecting, up to 16 MB. Beyond
   that, an unusually large reconnect may be rejected by the server.
-- Not yet tested on real devices. Mobile support has been checked with Playwright emulation (Pixel 7 and iPhone 14
-  profiles) only, not with real Android or iOS keyboards, browsers or networks.
-- Clipboard buttons were verified in Chromium only (Playwright cannot grant clipboard permission in Firefox or
-  WebKit).
+- Verified by hand on the live site: Chrome and Edge on Windows; an Android phone (on-screen keyboard,
+  cut/copy/paste, drawer, airplane-mode drop and reconnect, app backgrounding, End now); and an iPhone 17 with Safari
+  (QR code via the Camera app, Copy link and Copy all, long-press paste, backgrounding, rotation, theme). Tablets were
+  not tested.
+- Clipboard buttons were also verified by hand on Android and iOS Safari. The automated clipboard tests run in
+  Chromium only (Playwright cannot grant clipboard permission in Firefox or WebKit).
 
 ## Tech stack
 

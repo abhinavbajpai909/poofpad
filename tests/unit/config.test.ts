@@ -20,9 +20,18 @@ describe("public/_headers", () => {
   });
 
   it("caches only the hashed /assets/ files for long", () => {
-    expect(rules.slice(assetsAt)).toEqual([
+    expect(rules.slice(assetsAt, assetsAt + 2)).toEqual([
       "/assets/*",
       "  Cache-Control: public, max-age=31536000, immutable",
+    ]);
+  });
+
+  it("revalidates the landing page and forbids transforming it", () => {
+    expect(rules.slice(assetsAt + 2)).toEqual([
+      "/",
+      "  Cache-Control: no-cache, no-transform",
+      "/index.html",
+      "  Cache-Control: no-cache, no-transform",
     ]);
   });
 });

@@ -32,15 +32,16 @@ describe("security headers (test 21)", () => {
       const response = await get(path);
       expect(response.status).toBe(200);
       expectSecurityHeaders(response);
-      expect(response.headers.get("Cache-Control")).toBe("no-cache");
+      expect(response.headers.get("Cache-Control")).toBe("no-cache, no-transform");
       await response.body?.cancel();
     },
   );
 
-  it("are set on the landing page", async () => {
+  it("are set on the landing page, which must revalidate and not be transformed", async () => {
     const response = await env.ASSETS.fetch(new URL("/", origin));
     expect(response.status).toBe(200);
     expectSecurityHeaders(response);
+    expect(response.headers.get("Cache-Control")).toContain("no-transform");
     await response.body?.cancel();
   });
 
