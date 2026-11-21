@@ -21,7 +21,7 @@ import {
 } from "../../src/shared/limits";
 import { MAX_UPDATE_BYTES } from "../../src/client/edit-limit";
 
-describe("limits match CLAUDE.md section 3.1", () => {
+describe("limits match the specification", () => {
   it("has the specified values", () => {
     expect(MAX_PEERS_PER_PAD).toBe(50);
     expect(MAX_FRAME_BYTES).toBe(1024 * 1024);

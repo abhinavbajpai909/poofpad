@@ -89,7 +89,7 @@ Decisions / notes:
 
 ## Phase 4 — Expiry, End now, limits, compaction ✅ (2026-11-20)
 
-- [x] Max frame raised to 1 MB (decision 1); CLAUDE.md §3.1 and `docs/protocol.md` updated. Checked against
+- [x] Max frame raised to 1 MB (decision 1); the limits in `src/shared/limits.ts` and `docs/protocol.md` updated. Checked against
       current DO limits: 8 MB max SQLite row/BLOB, 32 MiB max WS message — fine. 5 MB stored cap kept.
       `SNAPSHOT` frames may be up to 5 MB + 5 bytes (a snapshot can be as large as the pad it replaces)
 - [x] Edit size guard (decision 2): `src/client/edit-limit.ts` — CodeMirror `changeFilter` blocks local changes
@@ -191,7 +191,7 @@ Final runs on the dev machine (Windows, i5 8th gen, 16 GB): `npm run check` 266 
 `npm run test:e2e` 181 passed, 3 skipped, 0 failed, 0 flaky (Chromium, Firefox, Pixel 7: 113 passed, 1 skipped
 in 5.5 min; WebKit, iPhone 14: 68 passed, 2 skipped in 7.7 min).
 
-- [x] Unit: crypto, protocol (incl. `INFO.now`), base64url edge cases, limits vs. CLAUDE.md 3.1, edit limit,
+- [x] Unit: crypto, protocol (incl. `INFO.now`), base64url edge cases, limits vs. the specification, edit limit,
       serial queue (order, keeps going after a failure, logs only "internal error"), `compactState`, configs
 - [x] Worker: lifecycle, alarm, End now, compaction (incl. re-request right after an answer), limits, close
       codes, Origin, headers, every client-sent server-only frame type, empty frame, awareness > 1 MB, SNAPSHOT > 5 MB + 5, 20 clients dropping and reconnecting at once (peer counts), `INFO.now`
