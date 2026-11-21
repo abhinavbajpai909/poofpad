@@ -1,14 +1,155 @@
 # PoofPad
 
-An end-to-end encrypted, real-time shared text pad. Anyone with the link can edit it live from a phone, tablet or
-laptop, and the pad disappears at an expiry its creator chooses (10 minutes up to 24 hours). The encryption key lives
-only in the link's `#fragment`, so the server stores ciphertext it cannot read.
+An end-to-end encrypted, real-time shared text pad that deletes itself at an expiry its creator chooses.
 
-> Work in progress. Full documentation arrives with the first release.
+## What it is
+
+PoofPad is a shared notepad. Create a pad, pick how long it lives (10 minutes, 1 hour, 6 hours or 24 hours), and send
+the link. Everyone who has the link edits the same text live, with each person's cursor shown. The text is encrypted in
+your browser before it is sent, so the server stores data it cannot read. When the pad expires, or its creator ends it,
+everything stored for it is deleted.
+
+It runs on Cloudflare Workers and Durable Objects and fits within the Free plan's limits.
+
+## Why PoofPad?
+
+Most ways of moving text between devices or people leave a permanent copy: email, chat history, cloud notes,
+pastebins. Often you only need to hand something over once, without an account, and without a server that can read it.
+
+PoofPad is a shared notepad built for exactly that:
+
+- **Live.** Everyone with the link edits the same text in real time.
+- **Private by design.** The text is encrypted in your browser. The decryption key lives in the part of the link after
+  `#`, which browsers do not send to servers, so the server only stores encrypted data.
+- **Temporary.** The creator picks a lifetime (10 minutes to 24 hours). When it ends, the pad is deleted for everyone.
+  The creator can also end it early.
+- **Nothing to sign up for.** No accounts, no cookies, no analytics, and no logging of pad content.
+
+Example uses:
+
+- Share a log, stack trace or config snippet while debugging, without leaving it in chat history.
+- Pair on a snippet with live cursors and syntax highlighting, with no repository or plugin.
+- Move text between your own machines, for example to a locked-down VM.
+- Take shared meeting or class notes that disappear afterwards.
+- Send text from a phone to a laptop by scanning the QR code.
+- Pass along a short-lived address or one-time code to someone who does not want an account.
+
+PoofPad handles plain text only. It is not a long-term notes app, and that is deliberate.
+
+## Features
+
+- Live collaborative editing (CRDT, [Yjs](https://yjs.dev)) with colored cursors and selections, and editable
+  display names
+- End-to-end encryption (AES-GCM 256, WebCrypto); the key never leaves the URL fragment
+- Expiry of 10 minutes, 1 hour (default), 6 hours or 24 hours; countdown shown on the pad; the creator can end a pad
+  early
+- Syntax highlighting for Plain text, JavaScript, TypeScript, Python, Java, SQL, JSON, HTML, CSS, Markdown, XML and
+  YAML; the chosen language is shared with everyone on the pad
+- Copy link, Copy all, and a QR code for the link
+- Dark (default) and light theme; the first visit follows the system setting
+- Responsive layout: on narrow screens the sidebar becomes a slide-in drawer
+- Reconnects automatically; edits made while offline are merged when the connection returns
+- Screens for expired, not found, pad full, incomplete link, wrong key, service busy and offline
+
+## Security model
+
+How it works:
+
+```
+Browser (Vite + TypeScript, CodeMirror 6, Yjs)
+   |  encrypted binary frames over wss
+   v
+Cloudflare Worker  (static assets, routing, security headers)
+   |
+   v
+Durable Object "Pad" (one per pad)
+   - SQLite: encrypted updates + expiry + hash of the creator's token
+   - alarm: deletes everything at expiry
+```
+
+A pad link looks like `https://<host>/p/<padId>#<key>`. The pad ID and the key are random and generated in the
+browser. Every document update, awareness update (cursors, names) and snapshot is encrypted with AES-GCM using a fresh
+random IV before it leaves the browser. The wire format is documented in [docs/protocol.md](docs/protocol.md).
+
+What this protects, and what it does not:
+
+- **The key stays in the URL fragment.** Browsers do not send the fragment to servers, so the key never reaches the
+  server. Anyone who has the full link can read and edit the pad. There are no read-only links and no passwords.
+- **What the server can see:** the pad ID, when a pad was created and when it expires, the timing and size of messages,
+  how many people are connected, and IP addresses at the Cloudflare edge (as for any website behind Cloudflare). It
+  cannot see the text, the key, or what anyone types.
+- **You must trust the JavaScript the site serves.** The code that encrypts and decrypts is delivered by the same
+  server. A malicious or compromised deployment could serve code that leaks keys or text. If that matters to you, run
+  your own copy.
+- **A client that has the key can write a garbage snapshot.** The server cannot verify ciphertext, so a participant
+  can send a corrupted snapshot when asked to compact the pad, which can damage the pad for everyone. Only share links
+  with people you trust to edit.
+- **A brand-new pad can be locked by someone who learns its ID.** The first stored message of a pad decides which key
+  counts as correct. Someone who learns a new pad's ID by other means (for example the server operator) could, in the
+  first moments before the creator's browser has synced, write with a wrong key, and the creator would then see "Wrong
+  key". No secret is exposed by this. To narrow the window, the Copy link and QR buttons stay disabled until the
+  creator's browser has synced.
+- **No accounts, cookies, analytics or content logging.** There are no third-party scripts, fonts or services. The
+  browser keeps a few things locally in `localStorage`: your theme, your display name and color, and, for pads you
+  created, a token that lets you end them early. Those tokens are removed when a pad is ended, expires or is not
+  found, and expired entries are cleaned up on later visits.
+- Security headers (a strict Content Security Policy, HSTS and others) are set on every response, and WebSocket and API
+  requests with a foreign `Origin` are refused. The CSP allows inline styles because the editor library inserts
+  `<style>` elements.
+
+## Limits
+
+| Limit                       | Value                                                                                                                        |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Single change (paste, edit) | about 1 MB (the largest paste measured to sync was 1,044,339 bytes); larger changes are blocked in the editor with a message |
+| Stored per pad              | 5 MB                                                                                                                         |
+| People per pad              | 50                                                                                                                           |
+| Messages per connection     | 40 per second                                                                                                                |
+| Expiry options              | 10 min, 1 h, 6 h, 24 h                                                                                                       |
+
+Because the Free plan has daily quotas on Durable Object operations (see
+[Cloudflare's limits](https://developers.cloudflare.com/durable-objects/platform/limits/)), a very busy deployment can
+reach them. Writes then fail until 00:00 UTC and the app shows a "service busy" screen.
+
+## Known limitations
+
+- If a tab is closed immediately after typing, the last 250 ms or so of edits can be lost: changes are batched for
+  250 ms before they are encrypted and sent.
+- While offline, the client keeps a log of its own edits in memory to resend them after reconnecting, up to 16 MB. Beyond
+  that, an unusually large reconnect may be rejected by the server.
+- Not yet tested on real devices. Mobile support has been checked with Playwright emulation (Pixel 7 and iPhone 14
+  profiles) only, not with real Android or iOS keyboards, browsers or networks.
+- Clipboard buttons were verified in Chromium only (Playwright cannot grant clipboard permission in Firefox or
+  WebKit).
+
+## Tech stack
+
+- Client: vanilla TypeScript, [Vite](https://vitejs.dev), [CodeMirror 6](https://codemirror.net),
+  [Yjs](https://yjs.dev) with `y-protocols` and `y-codemirror.next`, [uqr](https://github.com/unjs/uqr) for QR codes.
+  No UI framework.
+- Server: a Cloudflare Worker (hand-written router, Workers Static Assets) and a SQLite-backed Durable Object using
+  the WebSocket Hibernation API. No server framework.
+- Tests: Vitest (unit, and Worker tests with `@cloudflare/vitest-plugin`) and Playwright (end to end).
+
+## Project structure
+
+```
+src/
+  shared/    wire protocol, limits, close codes, base64url (used by client and worker)
+  worker/    Worker routing and headers, and the Pad Durable Object
+  client/    app, crypto, sync provider, editor, UI
+public/      favicon, theme script, _headers for static assets
+tests/
+  unit/      crypto, protocol, limits, client helpers
+  worker/    Durable Object and Worker behaviour
+  e2e/       Playwright tests
+docs/        protocol.md, progress.md
+wrangler.jsonc
+```
 
 ## Local development
 
-Requires Node.js 22.12 or newer. Works the same on Windows (PowerShell), macOS and Linux.
+Requires Node.js 22.12 or newer. The commands are the same on Windows (PowerShell), macOS and Linux.
 
 ```sh
 npm install
@@ -19,8 +160,39 @@ npm run dev
 - App with hot reload: http://localhost:5173 (API and WebSocket calls are proxied to the Worker)
 - Worker serving the built app: http://127.0.0.1:8787
 
-`npm run check` runs type checking, linting and tests.
+`.dev.vars` is gitignored. It sets `ALLOW_TEST_TTL=1`, which allows 15-second pads for testing. Production uses the
+value `"0"` from `wrangler.jsonc`.
+
+## Tests
+
+```sh
+npm run check            # type check, lint, unit and Worker tests
+npx playwright install   # once, to download the test browsers
+npm run test:e2e         # end-to-end tests: Chromium, Firefox, Pixel 7, then WebKit and iPhone 14
+```
+
+The end-to-end tests start the app themselves (see `playwright.config.ts`) and set `BASE_URL` to test another
+address. The WebKit projects run with a single worker because two WebKit instances at once were much slower on the
+development machine.
+
+## Deploy your own copy (Cloudflare Free plan)
+
+1. Create a free [Cloudflare](https://dash.cloudflare.com/sign-up) account and sign in from the terminal:
+   `npx wrangler login`.
+2. Run `npm run deploy`. It runs the checks, builds the app and runs `wrangler deploy`. The first deploy creates the
+   Worker and the `Pad` Durable Object (SQLite-backed) and gives you a `*.workers.dev` URL. No account ID is committed
+   to the repository.
+3. Optional: use your own domain. If the domain is on Cloudflare DNS, add a custom domain route to `wrangler.jsonc`
+   (see [Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/)) and deploy
+   again. Set `"workers_dev": false` to turn the `workers.dev` address off.
+4. Recommended: protect pad creation with a rate limiting rule in the Cloudflare dashboard (Security > WAF > Rate
+   limiting rules), matching `POST /api/pads`, for example a few requests per 10 seconds per IP address. Available
+   periods and rule counts depend on your plan; see
+   [Cloudflare's rate limiting documentation](https://developers.cloudflare.com/waf/rate-limiting-rules/).
+
+Observability and logging are turned off in `wrangler.jsonc` on purpose; do not enable them if you want to keep the
+no-logging property.
 
 ## License
 
-MIT
+[MIT](LICENSE)
