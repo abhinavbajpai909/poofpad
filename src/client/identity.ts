@@ -1,4 +1,5 @@
 import { cleanName } from "./name";
+import { pick } from "./random-pick";
 
 export interface Identity {
   name: string;
@@ -43,11 +44,6 @@ const COLORS = [
   "#8e6c4a",
   "#5f7f9a",
 ];
-
-function pick<T>(items: readonly T[]): T {
-  const index = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
-  return items[index % items.length] as T;
-}
 
 function randomIdentity(): Identity {
   return { name: `${pick(ADJECTIVES)} ${pick(ANIMALS)}`, color: pick(COLORS) };

@@ -21,6 +21,7 @@
     "../src/client/heartbeat.ts",
     "../src/client/local-log.ts",
     "../src/client/admin-token.ts",
+    "../src/client/random-pick.ts",
     "../worker-configuration.d.ts"
   ]
 }
