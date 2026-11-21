@@ -92,6 +92,9 @@ export async function serveAppShell(request: Request, env: Env): Promise<Respons
     response.headers.set(name, value);
   }
   response.headers.set("Cache-Control", "no-cache, no-transform");
+  if (new URL(request.url).pathname.startsWith("/p/")) {
+    response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
   return response;
 }
 

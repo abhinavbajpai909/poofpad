@@ -194,6 +194,11 @@ development machine.
    limiting rules), matching `POST /api/pads`, for example a few requests per 10 seconds per IP address. Available
    periods and rule counts depend on your plan; see
    [Cloudflare's rate limiting documentation](https://developers.cloudflare.com/waf/rate-limiting-rules/).
+5. Optional: if you also add a `www` custom domain, create a Redirect Rule in the Cloudflare dashboard (Rules >
+   Redirect Rules) with the hostname equal to `www.<your-domain>`, a dynamic target of
+   `concat("https://<your-domain>", http.request.uri.path)`, status 301 and "Preserve query string" turned on. This is
+   done in the dashboard rather than in the Worker so that static assets keep being served without Worker invocations.
+   Also edit `public/robots.txt` and `public/sitemap.xml` to use your own domain instead of `poofpad.com`.
 
 Observability and logging are turned off in `wrangler.jsonc` on purpose; do not enable them if you want to keep the
 no-logging property.
